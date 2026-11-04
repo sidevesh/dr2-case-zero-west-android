@@ -60,6 +60,7 @@ compiled in (both runtimes require it at configure time), **offline**
 | Mesa 26.2.6 — Turnip | MIT | `libturnip_mesa.so`, the fallback Adreno driver, built here from the official release tarball |
 | libadrenotools (+ linkernsbypass) | BSD-2-Clause | statically in `libmain.so`, plus its four hook libraries; loads Turnip without root |
 | volk | MIT | statically in `libmain.so`; Vulkan entry points loaded at run time |
+| DirectX Shader Compiler v1.8.2505.1 | University of Illinois/NCSA (LLVM) | `libdxcompiler.so`, built for Android by `scripts/build-dxc-android.sh`; translates shaders the game builds while it runs |
 
 The licence texts ship in the APK under `assets/licenses/`.
 

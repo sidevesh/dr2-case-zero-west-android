@@ -151,7 +151,13 @@ decisions, and why:
   The port presents with an identity transform and lets the compositor rotate, and
   ignores the resulting per-frame `VK_SUBOPTIMAL_KHR` (real resizes are still caught by
   the renderer's own size check).
-- **Shaders are translated on the PC.** Upstream translates the game's 1,300+ shaders
+- **DXC runs on the phone.** The title builds some shaders while it runs, and upstream
+  translates those the first time they appear, with DXC. Without DXC those draws were
+  skipped (12% of Case Zero's, leaving half-finished frames on screen), so the APK carries
+  DXC v1.8.2505.1 built for Android (`scripts/build-dxc-android.sh`, ~13 min on 4 cores),
+  run on a 32 MB-stack thread since bionic's default ~1 MB is too small for it. It also
+  lets IMPORT GAME PACKAGE build the whole shader cache on the phone.
+- **Shaders can also be translated on the PC.** Upstream translates the game's 1,300+ shaders
   to SPIR-V at first run with DXC, which has no Android build. The cache is
   platform-independent, so `prepare-assets.sh` builds the *same* patched runtime for the
   PC (against a stub image — only its `--build-shader-cache` mode runs) and makes it

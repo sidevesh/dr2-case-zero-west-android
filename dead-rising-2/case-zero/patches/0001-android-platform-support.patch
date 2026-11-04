@@ -56,6 +56,42 @@ index 05f4622..885beb9 100644
 +    set(DR2_ANDROID_DIR "${CZ_ANDROID_DIR}")
 +    include("${CZ_ANDROID_DIR}/android.cmake")
 +endif()
+diff --git a/runtime/gpu/shader_translator.cpp b/runtime/gpu/shader_translator.cpp
+index 61237ba..ffd4e0d 100644
+--- a/runtime/gpu/shader_translator.cpp
++++ b/runtime/gpu/shader_translator.cpp
+@@ -864,6 +864,21 @@ static std::wstring Widen(const std::string& s)
+     return w;
+ }
+ 
++#if defined(__ANDROID__)
++// ANDROID: DXC (Clang-based, deeply recursive) on a 32 MB stack, not the ~1 MB bionic
++// gives the std::threads this is called from — the first-sight worker and the disc
++// pass's pool (game-ports-android's android_glue.h, force-included at global scope).
++static bool CompileSpirvImpl(const std::string& hlsl, bool isVs, uint32_t tag,
++                             std::vector<uint8_t>& spv, std::string& err);
++static bool CompileSpirv(const std::string& hlsl, bool isVs, uint32_t tag,
++                         std::vector<uint8_t>& spv, std::string& err)
++{
++    bool ok = false;
++    ::Dr2Android_RunOnLargeStack([&] { ok = CompileSpirvImpl(hlsl, isVs, tag, spv, err); });
++    return ok;
++}
++#define CompileSpirv CompileSpirvImpl
++#endif
+ static bool CompileSpirv(const std::string& hlsl, bool isVs, uint32_t tag,
+                          std::vector<uint8_t>& spv, std::string& err)
+ {
+@@ -960,6 +975,9 @@ static bool CompileSpirv(const std::string& hlsl, bool isVs, uint32_t tag,
+     object->Release();
+     return true;
+ }
++#if defined(__ANDROID__)
++#undef CompileSpirv
++#endif
+ 
+ // ---------------------------------------------------------------------------
+ // The pipeline, end to end.
 diff --git a/runtime/gpu/vk_renderer.cpp b/runtime/gpu/vk_renderer.cpp
 index 0a43804..a7a39ff 100644
 --- a/runtime/gpu/vk_renderer.cpp

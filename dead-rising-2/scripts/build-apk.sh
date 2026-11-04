@@ -44,6 +44,7 @@ cp "$WORK/build-src/ffmpeg-$FFMPEG_VERSION/COPYING.LGPLv2.1" "$LIC/ffmpeg-LGPL-2
 cp "$DEPS/turnip/LICENSE-mesa.rst" "$LIC/mesa.rst" 2>/dev/null || true
 cp "$DEPS/adrenotools/LICENSE-adrenotools.txt" "$LIC/libadrenotools.txt" 2>/dev/null || true
 cp "$SRC/volk/LICENSE.md" "$LIC/volk.md" 2>/dev/null || true
+cp "$DEPS/dxc/LICENSE-dxc.txt" "$LIC/dxc.txt" 2>/dev/null || true
 
 # ---- --bundle: the prepared game data, plus a manifest the app installs from ----------
 if (( BUNDLE )); then

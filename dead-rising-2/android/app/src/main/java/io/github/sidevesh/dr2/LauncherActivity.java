@@ -176,9 +176,9 @@ public class LauncherActivity extends Activity {
         if (game) s.append(GameEnv.overlaysGenerated(this) ? "✓ Menu/prompt overlays generated\n"
                                                            : "• Overlays not generated (the game makes them at start)\n");
         s.append(shaders > 0 ? "✓ Shader cache: " + shaders + " modules\n"
-                             : "✗ Shader cache missing — a phone cannot build it. Run\n"
-                               + "  dead-rising-2/scripts/prepare-assets.sh on a PC, then\n"
-                               + "  IMPORT PREPARED ASSETS\n");
+                             : "✗ Shader cache missing — IMPORT GAME PACKAGE builds it on\n"
+                               + "  the phone (a few minutes, once), or import one made on a\n"
+                               + "  PC with scripts/prepare-assets.sh\n");
         mStatus.setText(s.toString());
         boolean idle = !mBusy;
         mPlay.setEnabled(idle && mNativeOk && !BuildConfig.NATIVE_STUB && game && shaders > 0);

@@ -74,6 +74,10 @@ public final class GameEnv {
         // device's own. The libadrenotools hooks stay in nativeLibraryDir; the chosen
         // Turnip is copied into private storage first (prepareTurnip).
         set("DR2_NATIVE_LIB_DIR", c.getApplicationInfo().nativeLibraryDir);
+        // DXC, built for Android and shipped in the APK (scripts/build-dxc-android.sh):
+        // the runtime translates shaders that first appear in play, as on PC.
+        File dxc = new File(c.getApplicationInfo().nativeLibraryDir, "libdxcompiler.so");
+        if (dxc.isFile()) set(p + "_DXC_LIB", dxc.getAbsolutePath());
         String drv = driver(c);
         File turnipDir = drv.equals("system") ? null : prepareTurnip(c, drv);
         if (turnipDir != null) {

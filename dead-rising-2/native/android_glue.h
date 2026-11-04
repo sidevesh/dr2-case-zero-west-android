@@ -37,4 +37,13 @@ bool Dr2Android_InitVulkan();
 const char* Dr2Android_VulkanDriver();
 
 }  // extern "C"
+
+#include <functional>
+
+// DXC ON A LARGE STACK. The shader translator calls DXC — a Clang-based compiler that
+// recurses deeply on big shaders — from plain std::threads, which bionic gives ~1 MB of
+// stack (glibc gives 8 MB). On Android the translator's one DXC entry point routes
+// through this: `fn` runs on a persistent 32 MB-stack thread and the caller waits.
+// Calls are serialised, so that thread's DXC compiler instance is made once and reused.
+void Dr2Android_RunOnLargeStack(const std::function<void()>& fn);
 #endif

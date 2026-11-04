@@ -29,6 +29,7 @@ mapfile -t ACM < <(android_cmake_args)
    -f "$DEPS/adrenotools/lib/libadrenotools.a" ]] ||
     die "Turnip / libadrenotools missing — run build-turnip.sh"
 [[ -f "$SRC/volk/volk.c" ]] || die "volk missing — run fetch-sources.sh $GAME_ID"
+[[ -f "$DEPS/dxc/libdxcompiler.so" ]] || die "DXC for Android missing — run build-dxc-android.sh"
 
 if (( STUB )); then
     PPC="$WORK/stub-ppc/$GAME_ID"
@@ -83,6 +84,8 @@ cp "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/$NDK_HOST/sysroot/usr/lib/aarch64
 cp "$DEPS/turnip-r6/libvulkan_freedreno.so" "$JNI/libturnip_r6.so"
 cp "$DEPS/turnip/libvulkan_freedreno.so" "$JNI/libturnip_mesa.so"
 cp "$DEPS"/adrenotools/hooks/*.so "$JNI/"
+# DXC for Android (build-dxc-android.sh): first-sight shader translation on the phone.
+cp "$DEPS/dxc/libdxcompiler.so" "$JNI/"
 echo "$STUB" > "$GAME_OUT/jniLibs/.stub"
 
 # Every library must be loadable on the device: either shipped in the APK, or a

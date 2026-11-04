@@ -70,6 +70,9 @@ jobs:
           sudo apt-get install -y glslang-tools bison flex python3-venv
           dead-rising-2/scripts/build-turnip.sh
 
+      - name: DXC for Android (first-sight shader translation on the phone)
+        run: dead-rising-2/scripts/build-dxc-android.sh
+
       - name: host prep tools (XenonRecomp, DXC, prep runtime)
         run: dead-rising-2/scripts/build-host-tools.sh ${{ matrix.game }}
 

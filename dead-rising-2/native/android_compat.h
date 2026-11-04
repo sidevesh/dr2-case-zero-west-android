@@ -35,4 +35,8 @@ static inline int pthread_getaffinity_np(pthread_t thread, size_t size, cpu_set_
 // first it makes each later <vulkan/vulkan.h> a no-op.
 #include "volk.h"
 
+// The Android seams the patched sources call (surface lifecycle, DXC's large stack),
+// declared here at global scope: some call sites sit inside upstream namespaces.
+#include "android_glue.h"
+
 #endif

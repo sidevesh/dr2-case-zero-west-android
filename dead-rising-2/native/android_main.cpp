@@ -138,6 +138,59 @@ extern "C" void Dr2Android_SurfaceReleased()
     g_surfaceReleased.store(true, std::memory_order_release);
 }
 
+// ---- DXC's large-stack thread (android_glue.h) ------------------------------------------
+namespace
+{
+std::mutex g_bigMu;
+std::condition_variable g_bigCv;
+const std::function<void()>* g_bigJob = nullptr;   // the one job in flight
+bool g_bigDone = false;
+pthread_t g_bigThread{};
+std::once_flag g_bigOnce;
+
+void* BigStackLoop(void*)
+{
+    pthread_setname_np(pthread_self(), "dr2-dxc");
+    for (;;)
+    {
+        std::unique_lock<std::mutex> lk(g_bigMu);
+        g_bigCv.wait(lk, [] { return g_bigJob != nullptr && !g_bigDone; });
+        const std::function<void()>* job = g_bigJob;
+        lk.unlock();
+        (*job)();
+        lk.lock();
+        g_bigDone = true;
+        g_bigCv.notify_all();
+    }
+    return nullptr;
+}
+} // namespace
+
+void Dr2Android_RunOnLargeStack(const std::function<void()>& fn)
+{
+    std::call_once(g_bigOnce, [] {
+        pthread_attr_t a;
+        pthread_attr_init(&a);
+        pthread_attr_setstacksize(&a, 32u << 20);
+        if (pthread_create(&g_bigThread, &a, BigStackLoop, nullptr) != 0)
+            std::fprintf(stderr, "[android] could not start the large-stack DXC thread\n");
+        pthread_attr_destroy(&a);
+    });
+    if (pthread_equal(pthread_self(), g_bigThread))
+    {
+        fn();   // already on it
+        return;
+    }
+    static std::mutex callers;   // one job at a time
+    std::lock_guard<std::mutex> one(callers);
+    std::unique_lock<std::mutex> lk(g_bigMu);
+    g_bigJob = &fn;
+    g_bigDone = false;
+    g_bigCv.notify_all();
+    g_bigCv.wait(lk, [] { return g_bigDone; });
+    g_bigJob = nullptr;
+}
+
 // ---- JNI ----------------------------------------------------------------------------
 extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM*, void*)
 {

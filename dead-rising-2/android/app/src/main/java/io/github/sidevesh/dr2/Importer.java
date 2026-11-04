@@ -83,6 +83,19 @@ final class Importer {
                     + Fs.tail(GameEnv.toolLog(c), 1500));
         }
         generateOverlays(c, ui);
+        buildShaderCacheIfMissing(c, ui);
+    }
+
+    /**
+     * The game's own disc shader pass (--build-shader-cache), on the phone, when there
+     * is no cache yet: DXC ships in the APK now, so a prepared-assets zip is optional.
+     */
+    static void buildShaderCacheIfMissing(Context c, Ui ui) {
+        if (GameEnv.shaderModules(c) > 0) return;
+        if (!new File(c.getApplicationInfo().nativeLibraryDir, "libdxcompiler.so").isFile()) return;
+        ui.status("Translating the game's shaders (about 1,400; once, a few minutes)…");
+        ui.progress(0, 0);
+        NativeBridge.runTool(new String[] { "--build-shader-cache" }, GameEnv.toolLog(c).getAbsolutePath());
     }
 
     /** The runtime's patched-asset overlays (PC options screen, prompts, strings). */
