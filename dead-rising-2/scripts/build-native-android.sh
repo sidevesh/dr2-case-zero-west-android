@@ -25,6 +25,9 @@ mapfile -t ACM < <(android_cmake_args)
 [[ -d "$GAME_SRC/runtime" ]] || die "no checkout at $GAME_SRC — run fetch-sources.sh $GAME_ID"
 [[ -f "$DEPS/sdl2/lib/libSDL2.so" && -f "$DEPS/ffmpeg/lib/libavcodec.so" ]] ||
     die "Android dependencies missing — run build-deps-android.sh"
+[[ -f "$DEPS/turnip/libvulkan_freedreno.so" && -f "$DEPS/adrenotools/lib/libadrenotools.a" ]] ||
+    die "Turnip / libadrenotools missing — run build-turnip.sh"
+[[ -f "$SRC/volk/volk.c" ]] || die "volk missing — run fetch-sources.sh $GAME_ID"
 
 if (( STUB )); then
     PPC="$WORK/stub-ppc/$GAME_ID"
@@ -44,6 +47,7 @@ log "configuring $RUNTIME for Android ($([[ $STUB == 1 ]] && echo stub || echo r
 cmake -S "$GAME_SRC/runtime" -B "$BUILD" -G Ninja "${ACM[@]}" \
     "-D${PFX}_PPC_DIR=$PPC" \
     "-D${PFX}_ANDROID_DIR=$DR2_DIR/native" \
+    -DDR2_VOLK_DIR="$SRC/volk" -DDR2_ADRENOTOOLS_DIR="$DEPS/adrenotools" \
     "-D${PFX}_SDL2_PREFIX=$DEPS/sdl2" \
     "-D${PFX}_FFMPEG_PREFIX=$DEPS/ffmpeg" \
     "-D${PFX}_SPLIT_DEBUG=OFF" "-D${PFX}_BUNDLE_RPATH=OFF" \
@@ -72,6 +76,8 @@ cp "$BUILD/libmain.so" "$GAME_OUT/symbols/libmain.so"
 "$NDK_BIN/llvm-strip" --strip-debug -o "$JNI/libmain.so" "$BUILD/libmain.so"
 cp "$DEPS/sdl2/lib/libSDL2.so" "$DEPS/ffmpeg/lib/libavcodec.so" "$DEPS/ffmpeg/lib/libavutil.so" "$JNI/"
 cp "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/$NDK_HOST/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$JNI/"
+# Turnip, and the libadrenotools hooks that load it (they must sit in nativeLibraryDir).
+cp "$DEPS/turnip/libvulkan_freedreno.so" "$DEPS"/adrenotools/hooks/*.so "$JNI/"
 echo "$STUB" > "$GAME_OUT/jniLibs/.stub"
 
 # Every library must be loadable on the device: either shipped in the APK, or a
@@ -79,6 +85,9 @@ echo "$STUB" > "$GAME_OUT/jniLibs/.stub"
 SYSLIBS="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/$NDK_HOST/sysroot/usr/lib/aarch64-linux-android/$ANDROID_API"
 for so in "$JNI"/*.so; do
     while read -r need; do
+        # libhardware/libsync: Turnip's, as a Vulkan HAL module; present on every
+        # device and resolved inside the system loader's namespace (build-turnip.sh).
+        [[ "$need" == libhardware.so || "$need" == libsync.so ]] && continue
         [[ -f "$JNI/$need" || -f "$SYSLIBS/$need" ]] ||
             die "$(basename "$so") needs $need: not in the APK and not an Android $ANDROID_API platform library"
     done < <("$NDK_BIN/llvm-readelf" -d "$so" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')

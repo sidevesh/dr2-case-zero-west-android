@@ -44,6 +44,11 @@ The renderer needs **Vulkan 1.3** with, among others, `textureCompressionBC`,
 
 - **Likely:** Snapdragon 8 Gen 1 or newer (Adreno 730+), Samsung Exynos with Xclipse
   (RDNA) GPUs. 8 GB RAM or more. Android 13+.
+- **Adreno needs Turnip, which the app bundles.** Qualcomm's own Adreno 7xx driver
+  reports `shaderInt64` absent (seen on an Adreno 740 / Galaxy S23 Ultra, Android 16),
+  and every translated shader needs it. The APK carries Mesa's open-source Turnip
+  driver (built from the official Mesa 26.2.6 release) and loads it with libadrenotools —
+  no root. **GPU DRIVER** in the launcher: *Auto* picks Turnip on Qualcomm chips.
 - **Not yet:** Mali (most MediaTek, Tensor, older Exynos) and PowerVR GPUs — they have
   no BC texture support, and the renderer uploads the game's DXT textures as BC. A CPU
   decode fallback is the main missing piece for them (see *Roadmap*).
@@ -169,8 +174,7 @@ decisions, and why:
 2. **Mali / PowerVR:** decode BC1–BC5 to RGBA8 on upload when `textureCompressionBC`
    is absent (Marathon's Android port solved the same thing with ETC2 + a cache).
 3. **Real pre-rotation** (rotate in the final blit) to save the compositor pass.
-4. **Custom Turnip drivers** via libadrenotools for Adreno devices whose system driver
-   is missing features or is slow (as Skate 3 Mobile and reNut do).
+4. ~~Turnip via libadrenotools~~ — done: bundled, and the launcher's default on Qualcomm.
 5. **Performance:** Android performance-hint sessions and big-core pinning; upstream's
    `thread_budget.cpp` pinning is compiled in but tuned for desktop topologies.
 6. Context-aware touch layouts (camera-mode buttons for Case West's photo mode).

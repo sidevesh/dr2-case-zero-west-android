@@ -37,6 +37,7 @@ public final class GameEnv {
     public static final String PREFS = "dr2";
     public static final String PREF_TOUCH = "touch_controls";
     public static final String PREF_EXTRA_ENV = "extra_env";
+    public static final String PREF_DRIVER = "gpu_driver";   // auto | turnip | system
 
     private GameEnv() {}
 
@@ -69,6 +70,10 @@ public final class GameEnv {
         set("XDG_DATA_HOME", saves(c).getAbsolutePath());
         set("XDG_CACHE_HOME", c.getCacheDir().getAbsolutePath());
         set("TMPDIR", c.getCacheDir().getAbsolutePath());
+        // The Vulkan driver (native/android_vulkan.cpp): the bundled Turnip, or the
+        // device's own. libadrenotools finds Turnip and its hooks in nativeLibraryDir.
+        set("DR2_NATIVE_LIB_DIR", c.getApplicationInfo().nativeLibraryDir);
+        set("DR2_VK_DRIVER", driver(c));
         // The desktop launcher is SDL-drawn and replaced on Android by LauncherActivity.
         set(p + "_LAUNCHER", "0");
         // SDL hints read from the environment. Touches must not turn into mouse events:
@@ -104,6 +109,22 @@ public final class GameEnv {
         if (aspect < 1.6) return "1280x800";
         int w = (int) Math.round(720 * aspect / 2.0) * 2;
         return Math.max(1280, Math.min(w, 6880)) + "x720";
+    }
+
+    /** "auto" resolves to Turnip on Qualcomm SoCs (Adreno GPUs), the system driver elsewhere. */
+    static boolean qualcomm() {
+        String m = android.os.Build.SOC_MANUFACTURER;
+        return m != null && (m.equalsIgnoreCase("QTI") || m.toLowerCase().contains("qualcomm"));
+    }
+
+    static String driverPref(Context c) {
+        return prefs(c).getString(PREF_DRIVER, "auto");
+    }
+
+    static String driver(Context c) {
+        String p = driverPref(c);
+        if (p.equals("auto")) return qualcomm() ? "turnip" : "system";
+        return p;
     }
 
     private static void set(String k, String v) {

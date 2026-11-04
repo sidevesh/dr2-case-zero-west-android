@@ -30,5 +30,11 @@ extern "C" {
 bool Dr2Android_SurfaceLost();
 void Dr2Android_SurfaceReleased();
 
+// THE VULKAN DRIVER (android_vulkan.cpp): load the system driver or the bundled
+// Turnip, per DR2_VK_DRIVER, and point volk at it. Once per process, before any
+// Vulkan call; android_main.cpp does it at both entry points.
+bool Dr2Android_InitVulkan();
+const char* Dr2Android_VulkanDriver();
+
 }  // extern "C"
 #endif

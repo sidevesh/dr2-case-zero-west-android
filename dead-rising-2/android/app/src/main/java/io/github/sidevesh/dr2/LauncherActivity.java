@@ -41,7 +41,7 @@ public class LauncherActivity extends Activity {
 
     private TextView mStatus, mProgressText;
     private ProgressBar mProgress;
-    private Button mPlay, mImportPackage, mImportAssets, mCheck, mLog, mAdvanced;
+    private Button mPlay, mImportPackage, mImportAssets, mCheck, mLog, mAdvanced, mDriver;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -134,6 +134,9 @@ public class LauncherActivity extends Activity {
                 Fs.tail(GameEnv.runtimeLog(this), 64 * 1024)));
         mAdvanced = button(r3, "Advanced", v -> advanced());
 
+        LinearLayout r4 = row(col);
+        mDriver = button(r4, "", v -> cycleDriver());
+
         CheckBox touch = new CheckBox(this);
         touch.setText("On-screen controls (hidden automatically when a controller is connected)");
         touch.setChecked(GameEnv.prefs(this).getBoolean(GameEnv.PREF_TOUCH, true));
@@ -183,6 +186,29 @@ public class LauncherActivity extends Activity {
         mImportAssets.setEnabled(idle);
         mCheck.setEnabled(idle && mNativeOk);
         mAdvanced.setEnabled(idle);
+        mDriver.setEnabled(idle);
+        String pref = GameEnv.driverPref(this), eff = GameEnv.driver(this);
+        mDriver.setText("GPU driver: " + (pref.equals("auto")
+                ? "Auto (" + (eff.equals("turnip") ? "Turnip" : "system") + ")"
+                : pref.equals("turnip") ? "Turnip (bundled)" : "System"));
+    }
+
+    /**
+     * Auto -> Turnip -> System -> Auto. The setting reaches the native side through
+     * the environment, which is read once per process: the launcher's own process is
+     * restarted so CHECK THIS DEVICE reports the driver just chosen.
+     */
+    private void cycleDriver() {
+        String next = switch (GameEnv.driverPref(this)) {
+            case "auto" -> "turnip";
+            case "turnip" -> "system";
+            default -> "auto";
+        };
+        GameEnv.prefs(this).edit().putString(GameEnv.PREF_DRIVER, next).commit();
+        Intent i = new Intent(this, LauncherActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        startActivity(i);
+        Runtime.getRuntime().exit(0);
     }
 
     // ---- actions --------------------------------------------------------------------

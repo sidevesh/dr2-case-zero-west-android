@@ -34,5 +34,6 @@ git -C "$SRC/XenosRecomp" submodule update -q --init --depth 1 thirdparty/dxc-bi
 apply_patches "$SRC/XenosRecomp" "$SRC"/recomp-patches/patches/XenosRecomp/*.patch
 
 clone_at "$XLIVE_REPO" "$XLIVE_COMMIT" "$SRC/XenonLive"
+clone_at "$VOLK_REPO" "$VOLK_COMMIT" "$SRC/volk"
 
 log "sources ready under $SRC"

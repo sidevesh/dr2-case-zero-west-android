@@ -65,6 +65,11 @@ jobs:
       - name: Android dependencies (SDL2, ffmpeg, XenonUtils)
         run: dead-rising-2/scripts/build-deps-android.sh
 
+      - name: Turnip (Mesa) and libadrenotools for Android
+        run: |
+          sudo apt-get install -y glslang-tools bison flex python3-venv
+          dead-rising-2/scripts/build-turnip.sh
+
       - name: host prep tools (XenonRecomp, DXC, prep runtime)
         run: dead-rising-2/scripts/build-host-tools.sh ${{ matrix.game }}
 

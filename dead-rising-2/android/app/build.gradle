@@ -101,11 +101,16 @@ android {
         // already: store every entry as-is, so the build does not spend minutes
         // deflating it and the app streams it straight out of the APK on first run.
         if (project.findProperty('dr2.bundled')?.toString() == '1') noCompress ''
+        // AAPT's default pattern drops every dot-file and "_"-prefixed folder from
+        // assets — and the runtime's overlay stamps are dot-files
+        // (game_patched/.cz_overlay_version). Keep everything but VCS/OS litter.
+        ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
     }
     packaging {
-        // Stored uncompressed and page-aligned, so the (large) libmain.so is mapped
-        // straight out of the APK instead of being unpacked a second time on install.
-        jniLibs.useLegacyPackaging = false
+        // Extracted to nativeLibraryDir on install: libadrenotools, which loads the
+        // bundled Turnip driver, needs its hook libraries there as real files (see its
+        // driver.h), and the manifest's extractNativeLibs follows this.
+        jniLibs.useLegacyPackaging = true
     }
     lint {
         // SDL's own Java is not ours to lint.

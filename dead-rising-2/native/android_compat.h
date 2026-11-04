@@ -30,4 +30,9 @@ static inline int pthread_getaffinity_np(pthread_t thread, size_t size, cpu_set_
     return sched_getaffinity(pthread_gettid_np(thread), size, set) == 0 ? 0 : errno;
 }
 
+// VULKAN THROUGH VOLK (android_vulkan.cpp explains why). With VK_NO_PROTOTYPES set
+// for the whole target, volk declares every vkXxx as a function pointer, and coming
+// first it makes each later <vulkan/vulkan.h> a no-op.
+#include "volk.h"
+
 #endif

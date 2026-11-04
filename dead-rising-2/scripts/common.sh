@@ -35,6 +35,12 @@ RECOMP_PATCHES_COMMIT=10d45b0952dd1b7f53f29dbff0795a27abb81ff7
 XLIVE_REPO=https://github.com/wivi514/XenonLive
 XLIVE_COMMIT=134d49b96f42a85323134a9af436dddfa987a7ea
 
+# volk (MIT): on Android every Vulkan call goes through function pointers it loads at
+# run time, so the app can choose the system driver or Turnip (native/android_vulkan.cpp).
+# Pinned to the release matching the NDK's own Vulkan headers (1.3.275).
+VOLK_REPO=https://github.com/zeux/volk
+VOLK_COMMIT=f2a16e3e19c2349b873343b2dc38a1d4c25af23a
+
 # The same SDL2 and ffmpeg versions upstream ships (tools/build_sdl2.sh,
 # tools/build_ffmpeg_lgpl.sh). SDL's Java glue must match the native library
 # exactly, so it is copied from this same source tree at build time.

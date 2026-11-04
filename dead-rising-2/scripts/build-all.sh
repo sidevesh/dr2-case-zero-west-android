@@ -20,6 +20,7 @@ INPUT="${2:-}"
 
 "$SCRIPTS/fetch-sources.sh" "$GAME_ID"
 "$SCRIPTS/build-deps-android.sh"
+"$SCRIPTS/build-turnip.sh"
 "$SCRIPTS/build-host-tools.sh" "$GAME_ID"
 "$SCRIPTS/recompile.sh" "$GAME_ID" "$INPUT"
 "$SCRIPTS/build-native-android.sh" "$GAME_ID"

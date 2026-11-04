@@ -41,6 +41,9 @@ cp "$GAME_SRC/LICENSE" "$LIC/${GAME_ID}-LICENSE.txt"
 cp "$DR2_DIR/NOTICE.md" "$LIC/NOTICE.md" 2>/dev/null || true
 cp "$WORK/build-src/SDL2-$SDL2_VERSION/LICENSE.txt" "$LIC/SDL2.txt" 2>/dev/null || true
 cp "$WORK/build-src/ffmpeg-$FFMPEG_VERSION/COPYING.LGPLv2.1" "$LIC/ffmpeg-LGPL-2.1.txt" 2>/dev/null || true
+cp "$DEPS/turnip/LICENSE-mesa.rst" "$LIC/mesa.rst" 2>/dev/null || true
+cp "$DEPS/adrenotools/LICENSE-adrenotools.txt" "$LIC/libadrenotools.txt" 2>/dev/null || true
+cp "$SRC/volk/LICENSE.md" "$LIC/volk.md" 2>/dev/null || true
 
 # ---- --bundle: the prepared game data, plus a manifest the app installs from ----------
 if (( BUNDLE )); then
@@ -86,6 +89,15 @@ log "gradle assemble${cap}${tcap}"
 
 APK="$(ls "$DR2_DIR/android/app/build/outputs/apk/$GAME_ID/$TYPE/"*.apk | head -1)"
 [[ -f "$APK" ]] || die "gradle produced no APK"
+if (( BUNDLE )); then
+    # Every file the manifest promises must really be in the APK: the packager has
+    # silently dropped files before (dot-files), and the app would fail mid-install.
+    missing="$(comm -23 <(sed -n 's/^[0-9]*\t//p' "$BUN/MANIFEST.txt" | sed 's|^|assets/bundled/|' | LC_ALL=C sort) \
+                        <(unzip -Z1 "$APK" | LC_ALL=C sort))"
+    [[ -z "$missing" ]] || die "files listed in the bundle manifest are missing from the APK:
+$missing"
+    log "bundle check: every manifest entry is in the APK"
+fi
 STUB="$(cat "$GAME_OUT/jniLibs/.stub")"
 SUFFIX=""
 [[ "$STUB" == 1 ]] && SUFFIX="-STUB-NOT-PLAYABLE"

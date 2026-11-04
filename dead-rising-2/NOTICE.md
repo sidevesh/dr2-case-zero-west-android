@@ -56,6 +56,9 @@ compiled in (both runtimes require it at configure time), **offline**
 | FFmpeg 8.1.2 | LGPL 2.1+ | `libavcodec.so`, `libavutil.so`, dynamically linked; configured with only the XMA1/XMA2 decoders and `--disable-gpl --disable-nonfree` (the build refuses otherwise) |
 | LLVM libc++ | Apache 2.0 with LLVM exception | `libc++_shared.so` from the NDK |
 | fmt, xxHash | MIT, BSD-2 | statically, via XenonUtils |
+| Mesa 26.2.6 — Turnip | MIT | `libvulkan_freedreno.so`, the bundled Adreno Vulkan driver, built from the official release tarball (`scripts/build-turnip.sh`) |
+| libadrenotools (+ linkernsbypass) | BSD-2-Clause | statically in `libmain.so`, plus its four hook libraries; loads Turnip without root |
+| volk | MIT | statically in `libmain.so`; Vulkan entry points loaded at run time |
 
 The licence texts ship in the APK under `assets/licenses/`.
 

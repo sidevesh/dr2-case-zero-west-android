@@ -150,6 +150,7 @@ extern "C" JNIEXPORT int SDL_main(int argc, char* argv[])
 {
     StartLogBridge();
     std::fprintf(stderr, "[android] SDL_main: entering the runtime (%d args)\n", argc);
+    Dr2Android_InitVulkan();
     const int rc = Dr2AndroidMain(argc, argv);
     std::fprintf(stderr, "[android] runtime returned %d — ending the game process\n", rc);
     std::fflush(nullptr);
@@ -190,6 +191,7 @@ Java_io_github_sidevesh_dr2_NativeBridge_runTool(JNIEnv* env, jclass, jobjectArr
         std::fprintf(stderr, " %s", args[i].c_str());
     std::fprintf(stderr, "\n");
 
+    Dr2Android_InitVulkan();   // --diag probes Vulkan, through the same driver choice
     const int rc = Dr2AndroidMain(int(args.size()), argv.data());
 
     std::fprintf(stderr, "[android] tool exit code %d\n", rc);

@@ -1,5 +1,5 @@
 diff --git a/runtime/CMakeLists.txt b/runtime/CMakeLists.txt
-index 7e59d4d..abb3594 100644
+index 7e59d4d..01936f6 100644
 --- a/runtime/CMakeLists.txt
 +++ b/runtime/CMakeLists.txt
 @@ -13,7 +13,9 @@ cmake_minimum_required(VERSION 3.20)
@@ -33,7 +33,7 @@ index 7e59d4d..abb3594 100644
      main.cpp
      cpu/timebase.cpp
      cpu/guest_thread.cpp
-@@ -772,3 +785,28 @@ endif()
+@@ -772,3 +785,22 @@ endif()
  endif()
  message(STATUS "Game version for bug reports: ${CW_GAME_VERSION}")
  set_source_files_properties(host/bug_report.cpp PROPERTIES COMPILE_DEFINITIONS "CW_GAME_VERSION=\"${CW_GAME_VERSION}\"")
@@ -41,26 +41,20 @@ index 7e59d4d..abb3594 100644
 +# ---- ANDROID (game-ports-android) ----------------------------------------------------
 +# The runtime as libmain.so for SDL's Android activity. Everything Android-specific
 +# that is not a one-line platform branch lives in CW_ANDROID_DIR (that project's
-+# dead-rising-2/native): the SDL_main/JNI entry points and the logcat bridge
-+# (android_main.cpp), the surface-lifecycle seam the renderer calls (android_glue.h),
-+# and the few glibc spellings bionic lacks, force-included like win_compat.h is on
-+# Windows (android_compat.h).
++# dead-rising-2/native), shared by both Dead Rising 2 ports: the build fragment
++# (android.cmake), the SDL_main/JNI entry points and logcat bridge, the Vulkan driver
++# choice (system or the bundled Turnip, through volk), the surface-lifecycle seam the
++# renderer calls, and the few glibc spellings bionic lacks.
 +if(ANDROID)
 +    set(CW_ANDROID_DIR "" CACHE PATH "game-ports-android's dead-rising-2/native directory")
-+    if(NOT EXISTS "${CW_ANDROID_DIR}/android_main.cpp")
++    if(NOT EXISTS "${CW_ANDROID_DIR}/android.cmake")
 +        message(FATAL_ERROR "Android build: set CW_ANDROID_DIR to game-ports-android's "
 +                            "dead-rising-2/native (got '${CW_ANDROID_DIR}')")
 +    endif()
-+    target_sources(cw_runtime PRIVATE "${CW_ANDROID_DIR}/android_main.cpp")
-+    target_include_directories(cw_runtime PRIVATE "${CW_ANDROID_DIR}")
-+    target_compile_options(cw_runtime PRIVATE
-+        "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include ${CW_ANDROID_DIR}/android_compat.h>")
-+    target_compile_definitions(cw_runtime PRIVATE DR2_LOG_TAG="CaseWest")
-+    # Upstream main() becomes a plain function that android_main.cpp's SDL_main calls.
-+    set_property(SOURCE main.cpp APPEND PROPERTY COMPILE_DEFINITIONS main=Dr2AndroidMain)
-+    target_link_libraries(cw_runtime PRIVATE android log)
-+    set_target_properties(cw_runtime PROPERTIES OUTPUT_NAME main)
-+    message(STATUS "Android: libmain.so, glue from ${CW_ANDROID_DIR}")
++    set(DR2_RUNTIME_TARGET cw_runtime)
++    set(DR2_LOG_TAG CaseWest)
++    set(DR2_ANDROID_DIR "${CW_ANDROID_DIR}")
++    include("${CW_ANDROID_DIR}/android.cmake")
 +endif()
 diff --git a/runtime/gpu/vk_renderer.cpp b/runtime/gpu/vk_renderer.cpp
 index c3bed45..4afbfc4 100644
@@ -269,10 +263,20 @@ index 82da47e..1f6a107 100644
          // "windowed, 1280x720" whatever the build's defaults actually were, and a
          // variant build (CW_DECK) would have had it stating the wrong resolution on
 diff --git a/runtime/host/window.cpp b/runtime/host/window.cpp
-index 66d3fc7..a444c3e 100644
+index 66d3fc7..e3f9d4b 100644
 --- a/runtime/host/window.cpp
 +++ b/runtime/host/window.cpp
-@@ -1759,6 +1759,15 @@ static void PreferWaylandWhenOffered()
+@@ -196,6 +196,9 @@ int Host_DisplayModeList(uint32_t*, int) { return 0; }
+ // VK_NULL_HANDLE only exists with the real header.
+ #include <vulkan/vulkan.h>
+ #include <SDL_vulkan.h>
++#if defined(__ANDROID__)
++#include <SDL_syswm.h>   // the ANativeWindow, for vkCreateAndroidSurfaceKHR
++#endif
+ #if defined(__APPLE__)
+ #include <SDL_metal.h>
+ #include <vulkan/vulkan_metal.h>
+@@ -1759,6 +1762,15 @@ static void PreferWaylandWhenOffered()
  // else in the process is touched.
  void Host_DiagVideo()
  {
@@ -288,7 +292,7 @@ index 66d3fc7..a444c3e 100644
      const char* T = "[diag] sdl:";
      SDL_version compiled, linked;
      SDL_VERSION(&compiled);
-@@ -1804,6 +1813,15 @@ bool Host_ProgressBegin(const char* title)
+@@ -1804,6 +1816,15 @@ bool Host_ProgressBegin(const char* title)
  {
      if (getenv("CW_NO_WINDOW"))
          return false;
@@ -304,6 +308,56 @@ index 66d3fc7..a444c3e 100644
      if (g_progWindow)
          return true;
      DeclareDpiAwareness();
+@@ -2950,6 +2971,13 @@ std::vector<const char*> Host_VulkanInstanceExtensions()
+     std::vector<const char*> out;
+     if (!Host_VulkanSwapchainWanted())
+         return out;
++#if defined(__ANDROID__)
++    // ANDROID builds its surface itself too (Host_VulkanCreateSurface), so the two
++    // extensions are known; SDL is not asked.
++    out.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
++    out.push_back(VK_KHR_ANDROID_SURFACE_EXTENSION_NAME);
++    return out;
++#endif
+ #if defined(__APPLE__)
+     // macOS builds its surface itself from the main-thread CAMetalLayer
+     // (Host_VulkanCreateSurface), so the two extensions that needs are known and SDL is
+@@ -2986,6 +3014,35 @@ bool Host_VulkanCreateSurface(void* instance, uint64_t* outSurface)
+ {
+     if (!Host_VulkanSwapchainWanted() || !instance || !outSurface)
+         return false;
++#if defined(__ANDROID__)
++    // ANDROID: the surface is made here, through the loader the renderer's instance
++    // came from (volk; game-ports-android's android_vulkan.cpp). SDL_Vulkan_CreateSurface
++    // would go through SDL's own copy of the SYSTEM loader, which knows nothing of an
++    // instance created by the bundled Turnip driver. The ANativeWindow is SDL's current
++    // one — after a background/foreground cycle, the new one.
++    {
++        SDL_SysWMinfo wm;
++        SDL_VERSION(&wm.version);
++        if (!SDL_GetWindowWMInfo(g_window, &wm) || !wm.info.android.window)
++        {
++            fprintf(stderr, "[host] no ANativeWindow yet: %s\n", SDL_GetError());
++            return false;
++        }
++        VkAndroidSurfaceCreateInfoKHR aci{ VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR };
++        aci.window = wm.info.android.window;
++        VkSurfaceKHR as = VK_NULL_HANDLE;
++        const VkResult rc = vkCreateAndroidSurfaceKHR
++            ? vkCreateAndroidSurfaceKHR(static_cast<VkInstance>(instance), &aci, nullptr, &as)
++            : VK_ERROR_EXTENSION_NOT_PRESENT;
++        if (rc != VK_SUCCESS)
++        {
++            fprintf(stderr, "[host] vkCreateAndroidSurfaceKHR failed (%d)\n", int(rc));
++            return false;
++        }
++        *outSurface = reinterpret_cast<uint64_t>(as);
++        return true;
++    }
++#endif
+ #if defined(__APPLE__)
+     // macOS: build the surface from the CAMetalLayer the WINDOW THREAD made (see
+     // g_metalLayer). SDL_Vulkan_CreateSurface would create and attach a fresh NSView
 diff --git a/runtime/main.cpp b/runtime/main.cpp
 index 517e3b7..5a3d282 100644
 --- a/runtime/main.cpp
