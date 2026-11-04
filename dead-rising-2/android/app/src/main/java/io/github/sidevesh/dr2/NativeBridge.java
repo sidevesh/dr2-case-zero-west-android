@@ -31,6 +31,9 @@ public final class NativeBridge {
     /** A new window surface exists; the renderer may build a swapchain on it. */
     public static native void surfaceRestored();
 
+    /** Loads the chosen Vulkan driver now (once per process); see GameActivity.onCreate. */
+    public static native boolean initVulkan();
+
     /** Frames the renderer has presented since the process started (the FPS readout). */
     public static native long presentCount();
 }

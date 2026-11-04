@@ -21,7 +21,14 @@
         android:isGame="true"
         android:allowBackup="false"
         android:hasFragileUserData="true"
-        android:largeHeap="true">
+        android:largeHeap="true"
+        android:hardwareAccelerated="false">
+        <!-- hardwareAccelerated=false: the app's own UI is drawn on the CPU so that
+             Android's UI renderer never loads the phone's stock Vulkan driver into our
+             processes. libadrenotools cannot swap in Turnip once the stock driver is
+             loaded (it silently hands back the stock one), and on Adreno 7xx the stock
+             driver cannot run this renderer. The game's picture is unaffected: it is
+             Vulkan on its own surface. -->
 
         <activity
             android:name=".LauncherActivity"

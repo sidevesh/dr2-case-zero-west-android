@@ -138,6 +138,15 @@ extern "C" void Dr2Android_SurfaceReleased()
     g_surfaceReleased.store(true, std::memory_order_release);
 }
 
+// boolean NativeBridge.initVulkan() — GameActivity calls it the moment libmain.so is
+// loaded, before any of the activity's UI exists: the Vulkan driver choice must be made
+// before anything else in the process loads a Vulkan driver (android_vulkan.cpp).
+extern "C" JNIEXPORT jboolean JNICALL
+Java_io_github_sidevesh_dr2_NativeBridge_initVulkan(JNIEnv*, jclass)
+{
+    return Dr2Android_InitVulkan() ? JNI_TRUE : JNI_FALSE;
+}
+
 // ---- frames presented (the in-game FPS readout) -----------------------------------------
 namespace
 {
@@ -264,6 +273,19 @@ Java_io_github_sidevesh_dr2_NativeBridge_runTool(JNIEnv* env, jclass, jobjectArr
     std::fprintf(stderr, "\n");
 
     Dr2Android_InitVulkan();   // --diag probes Vulkan, through the same driver choice
+    {
+        // Which driver that was, and anything that failed on the way — in the tool's own
+        // log, so a pasted device check carries it.
+        std::fprintf(stderr, "[android] Vulkan driver in this process: %s\n", Dr2Android_VulkanDriver());
+        const char* rp = std::getenv("DR2_VK_RESULT_FILE");
+        if (FILE* f = rp ? std::fopen(rp, "r") : nullptr)
+        {
+            char line[512];
+            while (std::fgets(line, sizeof line, f))
+                std::fprintf(stderr, "[android]   %s", line);
+            std::fclose(f);
+        }
+    }
     const int rc = Dr2AndroidMain(int(args.size()), argv.data());
 
     std::fprintf(stderr, "[android] tool exit code %d\n", rc);

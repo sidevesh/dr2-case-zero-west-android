@@ -37,6 +37,13 @@ public class GameActivity extends SDLActivity {
         // paths from the environment the moment it starts.
         GameEnv.apply(this);
         super.onCreate(savedInstanceState);
+        // libmain.so is loaded now: choose the Vulkan driver before this activity draws
+        // anything (the manifest also keeps this process's UI off the GPU).
+        try {
+            NativeBridge.initVulkan();
+        } catch (UnsatisfiedLinkError ignored) {
+            // A stub or failed native load: SDL shows its own error.
+        }
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         // Sustained performance: clocks the device can hold indefinitely, instead of a
