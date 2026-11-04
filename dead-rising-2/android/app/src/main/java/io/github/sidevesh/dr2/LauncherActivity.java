@@ -60,6 +60,11 @@ public class LauncherActivity extends Activity {
     protected void onResume() {
         super.onResume();
         refresh();
+        // An APK built with --bundle carries the game itself: install it the first
+        // time (and after an update that changed it), with nothing for the player to pick.
+        if (!mBusy && Importer.bundlePending(this)) {
+            runBusy("Game data installed — ready to play.", ui -> Importer.installBundled(this, ui));
+        }
     }
 
     // ---- UI ----------------------------------------------------------------------
@@ -122,7 +127,7 @@ public class LauncherActivity extends Activity {
         mPlay = button(r1, "Play", v -> play());
         LinearLayout r2 = row(col);
         mImportPackage = button(r2, "Import game package", v -> pick(REQ_PACKAGE, "*/*"));
-        mImportAssets = button(r2, "Import prepared assets", v -> pick(REQ_ASSETS, "application/zip"));
+        mImportAssets = button(r2, "Import prepared assets", v -> pick(REQ_ASSETS, "*/*"));
         LinearLayout r3 = row(col);
         mCheck = button(r3, "Check this device", v -> checkDevice());
         mLog = button(r3, "Last game log", v -> showText("Last game log",
@@ -159,6 +164,9 @@ public class LauncherActivity extends Activity {
              .append("  It can import and check data, but cannot play. Build your own APK\n")
              .append("  from your copy of the game — see the README.\n");
         }
+        if (Importer.bundleHeader(this) != null)
+            s.append(Importer.bundlePending(this) ? "• This app carries the game: installing it…\n"
+                                                  : "✓ Game data installed from this app\n");
         s.append(game ? "✓ Game data unpacked\n"
                       : "✗ Game data missing — IMPORT GAME PACKAGE (the XBLA file, " + BuildConfig.PACKAGE_SIZE
                         + ",\n  from Content/0000000000000000/" + BuildConfig.TITLE_ID + "/000D0000/ on the console)\n");
@@ -187,17 +195,26 @@ public class LauncherActivity extends Activity {
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         i.addCategory(Intent.CATEGORY_OPENABLE);
         i.setType(mime);
+        // Prepared assets may come in parts; they are picked together.
+        if (req == REQ_ASSETS) i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
         startActivityForResult(i, req);
     }
 
     @Override
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
-        if (res != RESULT_OK || data == null || data.getData() == null) return;
-        Uri uri = data.getData();
+        if (res != RESULT_OK || data == null) return;
+        java.util.List<Uri> uris = new java.util.ArrayList<>();
+        if (data.getClipData() != null) {
+            for (int i = 0; i < data.getClipData().getItemCount(); i++)
+                uris.add(data.getClipData().getItemAt(i).getUri());
+        } else if (data.getData() != null) {
+            uris.add(data.getData());
+        }
+        if (uris.isEmpty()) return;
         runBusy(req == REQ_PACKAGE ? "Game package imported." : "Prepared assets imported.", ui -> {
-            if (req == REQ_PACKAGE) Importer.importPackage(this, uri, ui);
-            else Importer.importPreparedAssets(this, uri, ui);
+            if (req == REQ_PACKAGE) Importer.importPackage(this, uris.get(0), ui);
+            else Importer.importPreparedAssets(this, uris, ui);
         });
     }
 

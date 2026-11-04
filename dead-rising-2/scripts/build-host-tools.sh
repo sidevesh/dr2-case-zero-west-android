@@ -61,6 +61,7 @@ cmake --build "$PREPB" -j"$(njobs)" >"$PREPB.build.log" 2>&1 ||
     { grep -E 'error' "$PREPB.build.log" | head -30; die "prep runtime build failed"; }
 # What the runtime looks for beside its executable (HostPaths::ShippedDir).
 cp "$GAME_SRC/tools/release/vs_recipes.bin" "$GAME_SRC/tools/release/prewarm.keys" "$PREPB/"
+mkdir -p "$PREPB/kbm_chips" && cp "$GAME_SRC"/tools/release/kbm_chips/*.dxt "$PREPB/kbm_chips/"
 mkdir -p "$PREPB/lib" && cp "$HOSTB/dxc/lib/"*.so "$PREPB/lib/"
 "$PREPB/$RUNTIME" --smoke >/dev/null 2>&1 || die "the prep runtime fails its own --smoke"
 log "host tools ready: $HOSTB"

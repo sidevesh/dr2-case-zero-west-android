@@ -87,6 +87,15 @@ scripts/build-apk.sh casezero                 # -> APK
 scripts/prepare-assets.sh casezero <package>  # -> the shader-cache zip (add --with-game to include the game)
 ```
 
+Two ways to skip the on-phone import of the package:
+
+- `prepare-assets.sh casezero <package> --split-mib 480` puts the game, its overlays and
+  the shader cache in zips of at most 480 MiB each (for transfers that cap file size);
+  pick **all** the parts together in IMPORT PREPARED ASSETS.
+- `build-apk.sh casezero release --bundle` (after prepare-assets.sh) builds the game data
+  into the APK itself (~0.9 GB Case Zero, ~1.3 GB Case West; install it with `adb install`);
+  the app copies it into place on first launch.
+
 ## Installing on the phone
 
 1. Install the APK. It is called **Dead Rising 2: Case Zero** (or Case West).

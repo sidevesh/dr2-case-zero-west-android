@@ -96,6 +96,12 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+    androidResources {
+        // A --bundle build carries ~0.9 GB of game data whose archives are compressed
+        // already: store every entry as-is, so the build does not spend minutes
+        // deflating it and the app streams it straight out of the APK on first run.
+        if (project.findProperty('dr2.bundled')?.toString() == '1') noCompress ''
+    }
     packaging {
         // Stored uncompressed and page-aligned, so the (large) libmain.so is mapped
         // straight out of the APK instead of being unpacked a second time on install.

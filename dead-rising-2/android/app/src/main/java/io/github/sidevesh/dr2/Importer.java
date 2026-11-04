@@ -14,8 +14,10 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.zip.ZipEntry;
@@ -93,18 +95,67 @@ final class Importer {
     }
 
     /**
-     * A zip made by dead-rising-2/scripts/prepare-assets.sh on a PC: the shader cache,
-     * and optionally the unpacked game. Checked for the right game, and every entry
+     * Zips made by dead-rising-2/scripts/prepare-assets.sh on a PC: the shader cache,
+     * and optionally the unpacked game — as one zip, or as parts of one set (made with
+     * --split-mib for transfers that cap file size), which must be picked together.
+     * Every manifest is checked first (right game, one complete set), and every entry
      * must stay inside assets/.
      */
-    static void importPreparedAssets(Context c, Uri uri, Ui ui) throws Failure, IOException {
-        File root = GameEnv.root(c);
-        String rootPath = root.getCanonicalPath() + File.separator;
-        long total = size(c, uri);
+    static void importPreparedAssets(Context c, List<Uri> uris, Ui ui) throws Failure, IOException {
+        if (uris.isEmpty()) return;
+        ui.status("Checking the selected file" + (uris.size() > 1 ? "s" : "") + "…");
+        ui.progress(0, 0);
+        List<Map<String, String>> ms = new ArrayList<>();
+        for (Uri u : uris) ms.add(peekManifest(c, u));
+        int parts = Integer.parseInt(ms.get(0).getOrDefault("parts", "1"));
+        String set = ms.get(0).getOrDefault("set", "");
+        Set<String> seen = new HashSet<>();
+        for (Map<String, String> m : ms) {
+            if (!BuildConfig.GAME_ID.equals(m.get("game")))
+                throw new Failure("These assets were prepared for '" + m.get("game")
+                        + "', not " + BuildConfig.GAME_TITLE + ".");
+            if (!set.equals(m.getOrDefault("set", "")))
+                throw new Failure("The selected files are parts of different sets. Pick the "
+                        + "parts that were made together.");
+            seen.add(m.getOrDefault("part", "1"));
+        }
+        if (seen.size() != uris.size() || uris.size() != parts)
+            throw new Failure("This set has " + parts + " parts, and " + seen.size()
+                    + " different one" + (seen.size() == 1 ? " was" : "s were")
+                    + " selected. Select all " + parts + " parts together (long-press to "
+                    + "select more than one file).");
+
+        long total = 0;
+        for (Uri u : uris) total = (total < 0 || size(c, u) < 0) ? -1 : total + size(c, u);
         long[] read = { 0 };
         Set<String> cleared = new HashSet<>();
-        boolean sawManifest = false, sawGame = false;
-        ui.status("Importing prepared assets…");
+        boolean sawGame = false;
+        for (int i = 0; i < uris.size(); i++) {
+            ui.status("Importing prepared assets" + (parts > 1 ? " (" + (i + 1) + " of " + parts + ")" : "") + "…");
+            sawGame |= extractPrepared(c, uris.get(i), cleared, read, total, ui);
+        }
+        if (sawGame && !GameEnv.overlaysGenerated(c)) generateOverlays(c, ui);
+    }
+
+    /** The DR2-ANDROID-ASSETS.txt that must open every prepared zip. */
+    private static Map<String, String> peekManifest(Context c, Uri uri) throws Failure, IOException {
+        try (InputStream raw = c.getContentResolver().openInputStream(uri)) {
+            if (raw == null) throw new Failure("could not read the selected file");
+            ZipInputStream zin = new ZipInputStream(raw);
+            ZipEntry e = zin.getNextEntry();
+            if (e == null || !e.getName().equals("DR2-ANDROID-ASSETS.txt"))
+                throw new Failure("Not a prepared-assets zip (it must start with "
+                        + "DR2-ANDROID-ASSETS.txt; make it with scripts/prepare-assets.sh).");
+            return readManifest(zin);
+        }
+    }
+
+    /** Unpacks one prepared zip (or part); returns whether it carried the game itself. */
+    private static boolean extractPrepared(Context c, Uri uri, Set<String> cleared, long[] read,
+                                           long total, Ui ui) throws Failure, IOException {
+        File root = GameEnv.root(c);
+        String rootPath = root.getCanonicalPath() + File.separator;
+        boolean sawGame = false;
         try (InputStream raw = c.getContentResolver().openInputStream(uri)) {
             if (raw == null) throw new Failure("could not read the selected file");
             InputStream counted = new java.io.FilterInputStream(raw) {
@@ -119,24 +170,12 @@ final class Importer {
                 byte[] buf = new byte[1 << 20];
                 while ((e = zin.getNextEntry()) != null) {
                     String name = e.getName();
-                    if (name.equals("DR2-ANDROID-ASSETS.txt")) {
-                        Map<String, String> m = readManifest(zin);
-                        String game = m.get("game");
-                        if (!BuildConfig.GAME_ID.equals(game))
-                            throw new Failure("These assets were prepared for '" + game
-                                    + "', not " + BuildConfig.GAME_TITLE + ".");
-                        sawManifest = true;
-                        continue;
-                    }
-                    if (!sawManifest)
-                        throw new Failure("Not a prepared-assets zip (it must start with "
-                                + "DR2-ANDROID-ASSETS.txt; make it with scripts/prepare-assets.sh).");
                     if (!name.startsWith("assets/") || e.isDirectory()) continue;
                     File out = new File(root, name);
                     if (!out.getCanonicalPath().startsWith(rootPath))
                         throw new Failure("Refusing an entry outside the data folder: " + name);
                     // Replace whole top-level folders (shader_spv, game, ...) rather than
-                    // mixing an old tree with a new one.
+                    // mixing an old tree with a new one — once per import, across parts.
                     String top = name.split("/")[1];
                     if (cleared.add(top)) Fs.deleteTree(new File(GameEnv.assets(c), top));
                     if (top.equals("game")) sawGame = true;
@@ -150,8 +189,93 @@ final class Importer {
                 }
             }
         }
-        if (!sawManifest) throw new Failure("Not a prepared-assets zip (no DR2-ANDROID-ASSETS.txt).");
-        if (sawGame && !GameEnv.overlaysGenerated(c)) generateOverlays(c, ui);
+        return sawGame;
+    }
+
+    // ---- game data bundled inside the APK (build-apk.sh --bundle) ---------------------
+
+    static final String BUNDLE_MANIFEST = "bundled/MANIFEST.txt";
+
+    /** The manifest's header (game, stamp, files, bytes), or null for an APK with no bundle. */
+    static Map<String, String> bundleHeader(Context c) {
+        try (InputStream in = c.getAssets().open(BUNDLE_MANIFEST)) {
+            Map<String, String> m = new HashMap<>();
+            BufferedReader r = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
+            String line;
+            while ((line = r.readLine()) != null && !line.equals("--")) {
+                int eq = line.indexOf('=');
+                if (eq > 0) m.put(line.substring(0, eq), line.substring(eq + 1));
+            }
+            return m;
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    static File bundleStamp(Context c) {
+        return new File(GameEnv.assets(c), ".bundled-stamp");
+    }
+
+    /** True when this APK carries game data that is not (or no longer) what is installed. */
+    static boolean bundlePending(Context c) {
+        Map<String, String> h = bundleHeader(c);
+        if (h == null) return false;
+        return !h.getOrDefault("stamp", "?").equals(Fs.readSmall(bundleStamp(c)));
+    }
+
+    /**
+     * Copies the bundled game data out of the APK into the data root, file by file as
+     * the manifest lists it. The top-level folders it carries (game, game_*,
+     * shader_spv) are replaced whole, and the stamp is written only once every file
+     * is in place, so an interrupted copy is simply redone on the next launch.
+     */
+    static void installBundled(Context c, Ui ui) throws Failure, IOException {
+        Map<String, String> h = bundleHeader(c);
+        if (h == null) return;
+        if (!BuildConfig.GAME_ID.equals(h.get("game")))
+            throw new Failure("This APK's bundled data is for '" + h.get("game") + "'.");
+        long total = Long.parseLong(h.getOrDefault("bytes", "0"));
+        File root = GameEnv.root(c);
+        String rootPath = root.getCanonicalPath() + File.separator;
+        //noinspection ResultOfMethodCallIgnored
+        bundleStamp(c).delete();
+        ui.status("Installing the game data bundled in this app (" + Fs.human(total)
+                + ", once)…");
+        Set<String> cleared = new HashSet<>();
+        long done = 0;
+        byte[] buf = new byte[1 << 20];
+        try (InputStream min = c.getAssets().open(BUNDLE_MANIFEST)) {
+            BufferedReader r = new BufferedReader(new InputStreamReader(min, StandardCharsets.UTF_8));
+            String line;
+            boolean body = false;
+            while ((line = r.readLine()) != null) {
+                if (!body) { body = line.equals("--"); continue; }
+                int tab = line.indexOf('\t');
+                if (tab <= 0) continue;
+                String rel = line.substring(tab + 1);
+                if (!rel.startsWith("assets/")) continue;
+                File out = new File(root, rel);
+                if (!out.getCanonicalPath().startsWith(rootPath))
+                    throw new Failure("Refusing a bundled entry outside the data folder: " + rel);
+                String top = rel.split("/")[1];
+                if (cleared.add(top)) Fs.deleteTree(new File(GameEnv.assets(c), top));
+                //noinspection ResultOfMethodCallIgnored
+                out.getParentFile().mkdirs();
+                try (InputStream in = c.getAssets().open("bundled/" + rel);
+                     OutputStream os = new FileOutputStream(out)) {
+                    int n;
+                    while ((n = in.read(buf)) > 0) {
+                        os.write(buf, 0, n);
+                        done += n;
+                        if ((done & ((8 << 20) - 1)) < n) ui.progress(done, total);
+                    }
+                }
+            }
+        }
+        ui.progress(total, total);
+        if (!GameEnv.gameUnpacked(c))
+            throw new Failure("The bundled data did not contain the game (default.xex).");
+        Fs.writeSmall(bundleStamp(c), h.getOrDefault("stamp", "?"));
     }
 
     private static Map<String, String> readManifest(InputStream in) throws IOException {
