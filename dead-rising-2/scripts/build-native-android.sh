@@ -25,7 +25,8 @@ mapfile -t ACM < <(android_cmake_args)
 [[ -d "$GAME_SRC/runtime" ]] || die "no checkout at $GAME_SRC — run fetch-sources.sh $GAME_ID"
 [[ -f "$DEPS/sdl2/lib/libSDL2.so" && -f "$DEPS/ffmpeg/lib/libavcodec.so" ]] ||
     die "Android dependencies missing — run build-deps-android.sh"
-[[ -f "$DEPS/turnip/libvulkan_freedreno.so" && -f "$DEPS/adrenotools/lib/libadrenotools.a" ]] ||
+[[ -f "$DEPS/turnip/libvulkan_freedreno.so" && -f "$DEPS/turnip-r6/libvulkan_freedreno.so" &&
+   -f "$DEPS/adrenotools/lib/libadrenotools.a" ]] ||
     die "Turnip / libadrenotools missing — run build-turnip.sh"
 [[ -f "$SRC/volk/volk.c" ]] || die "volk missing — run fetch-sources.sh $GAME_ID"
 
@@ -76,8 +77,12 @@ cp "$BUILD/libmain.so" "$GAME_OUT/symbols/libmain.so"
 "$NDK_BIN/llvm-strip" --strip-debug -o "$JNI/libmain.so" "$BUILD/libmain.so"
 cp "$DEPS/sdl2/lib/libSDL2.so" "$DEPS/ffmpeg/lib/libavcodec.so" "$DEPS/ffmpeg/lib/libavutil.so" "$JNI/"
 cp "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/$NDK_HOST/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$JNI/"
-# Turnip, and the libadrenotools hooks that load it (they must sit in nativeLibraryDir).
-cp "$DEPS/turnip/libvulkan_freedreno.so" "$DEPS"/adrenotools/hooks/*.so "$JNI/"
+# The two Turnip builds (build-turnip.sh), under names that cannot clash; the app
+# copies the chosen one into private storage as libvulkan_freedreno.so before
+# loading it. And the libadrenotools hooks, which must sit in nativeLibraryDir.
+cp "$DEPS/turnip-r6/libvulkan_freedreno.so" "$JNI/libturnip_r6.so"
+cp "$DEPS/turnip/libvulkan_freedreno.so" "$JNI/libturnip_mesa.so"
+cp "$DEPS"/adrenotools/hooks/*.so "$JNI/"
 echo "$STUB" > "$GAME_OUT/jniLibs/.stub"
 
 # Every library must be loadable on the device: either shipped in the APK, or a

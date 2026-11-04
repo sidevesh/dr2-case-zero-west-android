@@ -37,7 +37,7 @@ public final class GameEnv {
     public static final String PREFS = "dr2";
     public static final String PREF_TOUCH = "touch_controls";
     public static final String PREF_EXTRA_ENV = "extra_env";
-    public static final String PREF_DRIVER = "gpu_driver";   // auto | turnip | system
+    public static final String PREF_DRIVER = "gpu_driver";   // auto | r6 | mesa | system
 
     private GameEnv() {}
 
@@ -70,10 +70,24 @@ public final class GameEnv {
         set("XDG_DATA_HOME", saves(c).getAbsolutePath());
         set("XDG_CACHE_HOME", c.getCacheDir().getAbsolutePath());
         set("TMPDIR", c.getCacheDir().getAbsolutePath());
-        // The Vulkan driver (native/android_vulkan.cpp): the bundled Turnip, or the
-        // device's own. libadrenotools finds Turnip and its hooks in nativeLibraryDir.
+        // The Vulkan driver (native/android_vulkan.cpp): a bundled Turnip build, or the
+        // device's own. The libadrenotools hooks stay in nativeLibraryDir; the chosen
+        // Turnip is copied into private storage first (prepareTurnip).
         set("DR2_NATIVE_LIB_DIR", c.getApplicationInfo().nativeLibraryDir);
-        set("DR2_VK_DRIVER", driver(c));
+        String drv = driver(c);
+        File turnipDir = drv.equals("system") ? null : prepareTurnip(c, drv);
+        if (turnipDir != null) {
+            set("DR2_VK_DRIVER", "turnip");
+            set("DR2_VK_DRIVER_DIR", turnipDir.getAbsolutePath());
+            set("DR2_VK_DRIVER_FILE", "libvulkan_freedreno.so");
+            set("DR2_VK_DRIVER_LABEL", label(drv));
+            // Turnip's direct (sysmem) rendering rather than tiled GMEM: LibertyRecomp
+            // measured GMEM ~15% slower on a renderer with many small passes and
+            // resolves, which this one is too. TU_DEBUG= in ADVANCED restores GMEM.
+            set("TU_DEBUG", "sysmem");
+        } else {
+            set("DR2_VK_DRIVER", "system");
+        }
         // The desktop launcher is SDL-drawn and replaced on Android by LauncherActivity.
         set(p + "_LAUNCHER", "0");
         // SDL hints read from the environment. Touches must not turn into mouse events:
@@ -111,20 +125,61 @@ public final class GameEnv {
         return Math.max(1280, Math.min(w, 6880)) + "x720";
     }
 
-    /** "auto" resolves to Turnip on Qualcomm SoCs (Adreno GPUs), the system driver elsewhere. */
-    static boolean qualcomm() {
+    /**
+     * An Adreno GPU: a Qualcomm SoC, or the KGSL device node Turnip drives. Anything
+     * else (Mali, Xclipse, ...) gets its own driver; Turnip cannot run there.
+     */
+    static boolean adreno() {
         String m = android.os.Build.SOC_MANUFACTURER;
-        return m != null && (m.equalsIgnoreCase("QTI") || m.toLowerCase().contains("qualcomm"));
+        boolean qcom = m != null && (m.equalsIgnoreCase("QTI") || m.toLowerCase().contains("qualcomm"));
+        return qcom || new File("/dev/kgsl-3d0").exists() || new File("/sys/class/kgsl").exists();
     }
 
     static String driverPref(Context c) {
-        return prefs(c).getString(PREF_DRIVER, "auto");
+        String p = prefs(c).getString(PREF_DRIVER, "auto");
+        return p.equals("turnip") ? "r6" : p;   // the setting's name before R6 was bundled
     }
 
+    /** The build to load: "r6", "mesa" or "system". "auto" is R6 on Adreno. */
     static String driver(Context c) {
         String p = driverPref(c);
-        if (p.equals("auto")) return qualcomm() ? "turnip" : "system";
+        if (p.equals("auto")) return adreno() ? "r6" : "system";
         return p;
+    }
+
+    static String label(String build) {
+        switch (build) {
+            case "r6": return "StevenMXZ Turnip 26.3.0-R6";
+            case "mesa": return "Mesa Turnip 26.2.6";
+            default: return "system driver";
+        }
+    }
+
+    /**
+     * Copies nativeLibraryDir/libturnip_<build>.so to files/drivers/<build>/
+     * libvulkan_freedreno.so when it is missing or from another APK, and returns
+     * that directory; null (= use the system driver) if the copy fails.
+     */
+    static File prepareTurnip(Context c, String build) {
+        File src = new File(c.getApplicationInfo().nativeLibraryDir, "libturnip_" + build + ".so");
+        File dir = new File(new File(c.getFilesDir(), "drivers"), build);
+        File dst = new File(dir, "libvulkan_freedreno.so");
+        File stamp = new File(dir, ".stamp");
+        String want = apkStamp(c) + "/" + src.length();
+        if (dst.isFile() && dst.length() == src.length() && want.equals(Fs.readSmall(stamp))) return dir;
+        try {
+            Fs.deleteTree(dir);
+            if (!dir.mkdirs()) throw new IOException("cannot create " + dir);
+            try (InputStream in = new java.io.FileInputStream(src);
+                 OutputStream out = new FileOutputStream(dst)) {
+                Fs.copy(in, out, null);
+            }
+            Fs.writeSmall(stamp, want);
+            return dir;
+        } catch (IOException e) {
+            Log.e(TAG, "could not prepare Turnip (" + build + "), using the system driver", e);
+            return null;
+        }
     }
 
     private static void set(String k, String v) {

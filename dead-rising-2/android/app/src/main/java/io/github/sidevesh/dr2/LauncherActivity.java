@@ -189,19 +189,19 @@ public class LauncherActivity extends Activity {
         mDriver.setEnabled(idle);
         String pref = GameEnv.driverPref(this), eff = GameEnv.driver(this);
         mDriver.setText("GPU driver: " + (pref.equals("auto")
-                ? "Auto (" + (eff.equals("turnip") ? "Turnip" : "system") + ")"
-                : pref.equals("turnip") ? "Turnip (bundled)" : "System"));
+                ? "Auto (" + GameEnv.label(eff) + ")" : GameEnv.label(pref)));
     }
 
     /**
-     * Auto -> Turnip -> System -> Auto. The setting reaches the native side through
-     * the environment, which is read once per process: the launcher's own process is
-     * restarted so CHECK THIS DEVICE reports the driver just chosen.
+     * Auto -> Turnip R6 -> Turnip Mesa -> System -> Auto. The choice reaches the native
+     * side through the environment, read once per process: the launcher's own process
+     * is restarted so CHECK THIS DEVICE reports the driver just chosen.
      */
     private void cycleDriver() {
         String next = switch (GameEnv.driverPref(this)) {
-            case "auto" -> "turnip";
-            case "turnip" -> "system";
+            case "auto" -> "r6";
+            case "r6" -> "mesa";
+            case "mesa" -> "system";
             default -> "auto";
         };
         GameEnv.prefs(this).edit().putString(GameEnv.PREF_DRIVER, next).commit();

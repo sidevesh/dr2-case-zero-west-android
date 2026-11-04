@@ -15,6 +15,9 @@
 // buffer device addresses). Turnip exposes it. The app picks per device (launcher:
 // GPU DRIVER, "auto" = Turnip on Qualcomm SoCs) and passes DR2_VK_DRIVER.
 //
+// libadrenotools can silently fall back to the stock driver; --diag (CHECK THIS
+// DEVICE) names the driver the device really reports, which is the proof.
+//
 // Instance-level and device-level pointers are reloaded after every vkCreateInstance
 // by wrapping that one pointer — no call site in the renderer changes.
 #include "android_glue.h"
@@ -47,25 +50,29 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateInstanceThenLoad(const VkInstanceCreateInfo
 
 void* OpenTurnip()
 {
-    // nativeLibraryDir, where the APK's libraries are extracted (the manifest asks for
-    // legacy packaging, which adrenotools requires). Its hooks and the driver live
-    // there; adrenotools joins dir + name, so the trailing slash matters.
-    const char* d = std::getenv("DR2_NATIVE_LIB_DIR");
-    if (!d || !*d)
+    // As LibertyRecompAndroid (GTA IV) does it on the same phones: the app copies the
+    // chosen Turnip build into PRIVATE storage (files/drivers/<build>/, never shared
+    // storage — dlopen refuses that) and names it here; the adrenotools hooks stay in
+    // nativeLibraryDir, where the manifest's legacy packaging extracts them.
+    // adrenotools joins dir + file name, so the trailing slashes matter.
+    const char* hooks = std::getenv("DR2_NATIVE_LIB_DIR");
+    const char* dir = std::getenv("DR2_VK_DRIVER_DIR");
+    const char* file = std::getenv("DR2_VK_DRIVER_FILE");
+    if (!hooks || !*hooks || !dir || !*dir || !file || !*file)
     {
-        std::fprintf(stderr, "[android] Turnip: DR2_NATIVE_LIB_DIR is not set\n");
+        std::fprintf(stderr, "[android] Turnip: DR2_NATIVE_LIB_DIR / DR2_VK_DRIVER_DIR / "
+                             "DR2_VK_DRIVER_FILE not set\n");
         return nullptr;
     }
-    std::string dir = d;
-    if (dir.back() != '/')
-        dir += '/';
-    void* h = adrenotools_open_libvulkan(RTLD_NOW | RTLD_LOCAL, ADRENOTOOLS_DRIVER_CUSTOM,
-                                         nullptr, dir.c_str(), dir.c_str(),
-                                         "libvulkan_freedreno.so", nullptr, nullptr);
-    if (!h)
-        std::fprintf(stderr, "[android] Turnip: adrenotools could not open it (%s)\n",
-                     dlerror());
-    return h;
+    std::string h = hooks, d = dir;
+    if (h.back() != '/') h += '/';
+    if (d.back() != '/') d += '/';
+    void* lib = adrenotools_open_libvulkan(RTLD_NOW | RTLD_LOCAL, ADRENOTOOLS_DRIVER_CUSTOM,
+                                           d.c_str(), h.c_str(), d.c_str(), file, nullptr, nullptr);
+    if (!lib)
+        std::fprintf(stderr, "[android] Turnip: adrenotools could not open %s%s (%s)\n",
+                     d.c_str(), file, dlerror());
+    return lib;
 }
 } // namespace
 
@@ -85,7 +92,10 @@ extern "C" bool Dr2Android_InitVulkan()
         {
             lib = OpenTurnip();
             if (lib)
-                g_driverName = "turnip (Mesa, bundled)";
+            {
+                const char* label = std::getenv("DR2_VK_DRIVER_LABEL");
+                g_driverName = std::string("turnip: ") + (label && *label ? label : "bundled");
+            }
             else
                 std::fprintf(stderr, "[android] falling back to the system Vulkan driver\n");
         }

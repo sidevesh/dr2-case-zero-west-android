@@ -47,8 +47,14 @@ The renderer needs **Vulkan 1.3** with, among others, `textureCompressionBC`,
 - **Adreno needs Turnip, which the app bundles.** Qualcomm's own Adreno 7xx driver
   reports `shaderInt64` absent (seen on an Adreno 740 / Galaxy S23 Ultra, Android 16),
   and every translated shader needs it. The APK carries Mesa's open-source Turnip
-  driver (built from the official Mesa 26.2.6 release) and loads it with libadrenotools —
-  no root. **GPU DRIVER** in the launcher: *Auto* picks Turnip on Qualcomm chips.
+  driver in two builds and loads it with libadrenotools — no root:
+  **StevenMXZ Turnip 26.3.0-R6**, the default — the build
+  [LibertyRecompAndroid](https://github.com/vaduur/LibertyRecompAndroid) (GTA IV) ships and
+  that runs on a Galaxy S23 Ultra — and **Mesa 26.2.6** built here from the official
+  release, as a fallback. **GPU DRIVER** in the launcher: *Auto* (R6 on Adreno), *R6*,
+  *Mesa*, *System*. As in LibertyRecomp, the driver is copied to private storage before
+  loading, and Turnip runs in sysmem mode by default (`TU_DEBUG=sysmem`; override in
+  ADVANCED).
 - **Not yet:** Mali (most MediaTek, Tensor, older Exynos) and PowerVR GPUs — they have
   no BC texture support, and the renderer uploads the game's DXT textures as BC. A CPU
   decode fallback is the main missing piece for them (see *Roadmap*).

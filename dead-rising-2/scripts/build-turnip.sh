@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 # build-turnip.sh
 #
-# Builds Turnip — Mesa's open-source Vulkan driver for Qualcomm Adreno GPUs — for
-# Android arm64, from the official Mesa release tarball, plus libadrenotools, which
-# lets an ordinary app load it (no root):
-#   $DEPS/turnip/libvulkan_freedreno.so   the driver, an Android Vulkan HAL module
-#   $DEPS/adrenotools/                    libadrenotools.a, its headers, its hook .so's
+# Prepares Turnip — Mesa's open-source Vulkan driver for Qualcomm Adreno GPUs — for
+# Android arm64, in two builds, plus libadrenotools, which lets an ordinary app load
+# either (no root):
+#   $DEPS/turnip-r6/libvulkan_freedreno.so  StevenMXZ's Turnip 26.3.0-R6 (Mesa
+#                      26.3.0-devel + patches, a6xx/a7xx): the DEFAULT. It is the build
+#                      LibertyRecompAndroid (GTA IV) bundles and that runs on a Galaxy
+#                      S23 Ultra / Adreno 740; fetched at that project's pinned commit
+#                      and checked against the SHA-256s it pins.
+#   $DEPS/turnip/libvulkan_freedreno.so     upstream Mesa $MESA_VERSION built here from
+#                      the official release tarball: the fallback, and the one to
+#                      reproduce from source.
+#   $DEPS/adrenotools/                      libadrenotools.a, its headers, its hook .so's
 #
 # WHY: Qualcomm's own Adreno 7xx driver does not expose shaderInt64, and every shader
 # this renderer translates uses 64-bit addresses (bufferDeviceAddress). Turnip does.
@@ -18,6 +25,9 @@ find_ndk
 DL="$WORK/downloads"; mkdir -p "$DL" "$DEPS"
 
 MESA_VERSION=26.2.6
+TURNIP_R6_URL=https://raw.githubusercontent.com/vaduur/LibertyRecompAndroid/f4f6d8ae904d6d781671759d3d83c983768127d6/os/android/app/src/main/assets/drivers/turnip-r6.zip
+TURNIP_R6_ZIP_SHA256=5fa2305eb9eff64d9347a670e6ca5ef7c518f60e9e782a4db7ee5588c9852d81
+TURNIP_R6_LIB_SHA256=4fd2fd30311af301ae5564139bc24cc727390d4dc3c90a20192c25ec91287c59
 MESA_SHA256=b9436b3e1a8be76fbd4823dc884f90596ab7c6ac5e1867a305e66ffccfb31a92
 ADRENOTOOLS_REPO=https://github.com/bylaws/libadrenotools
 ADRENOTOOLS_COMMIT=8fae8ce254dfc1344527e05301e43f37dea2df80
@@ -121,6 +131,23 @@ build_adrenotools() {
     echo "$ADRENOTOOLS_COMMIT" > "$pfx/.version"
 }
 
+# ---- StevenMXZ Turnip 26.3.0-R6 (prebuilt, pinned) -------------------------------------
+fetch_turnip_r6() {
+    local pfx="$DEPS/turnip-r6" zip="$DL/turnip-r6.zip"
+    if [[ -f "$pfx/libvulkan_freedreno.so" ]] &&
+       echo "$TURNIP_R6_LIB_SHA256  $pfx/libvulkan_freedreno.so" | sha256sum -c --quiet - 2>/dev/null; then
+        log "Turnip 26.3.0-R6 already present"; return 0
+    fi
+    [[ -f "$zip" ]] || curl -fsSL --retry 3 -o "$zip" "$TURNIP_R6_URL"
+    echo "$TURNIP_R6_ZIP_SHA256  $zip" | sha256sum -c --quiet - || die "turnip-r6.zip does not match its pinned SHA-256"
+    rm -rf "$pfx"; mkdir -p "$pfx"
+    unzip -q -o "$zip" -d "$pfx"
+    echo "$TURNIP_R6_LIB_SHA256  $pfx/libvulkan_freedreno.so" | sha256sum -c --quiet - ||
+        die "the R6 driver library does not match its pinned SHA-256"
+    log "Turnip 26.3.0-R6: $(sed -n 's/.*"name": *"\(.*\)".*/\1/p' "$pfx/meta.json") verified"
+}
+
 build_adrenotools
+fetch_turnip_r6
 build_turnip
 log "Turnip + libadrenotools ready under $DEPS"
