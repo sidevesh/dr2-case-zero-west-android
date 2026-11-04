@@ -1,0 +1,15 @@
+# Everything the Dead Rising 2 scripts download or build (scripts/common.sh WORK).
+/dead-rising-2/build/
+
+# Gradle / Android Studio
+.gradle/
+/dead-rising-2/android/app/build/
+/dead-rising-2/android/build/
+local.properties
+*.iml
+.idea/
+
+# Never commit game data or anything derived from it.
+*.xex
+*.apk
+*-android-assets.zip

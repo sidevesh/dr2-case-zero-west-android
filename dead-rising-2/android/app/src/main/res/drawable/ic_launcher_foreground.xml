@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A generic mark (a broken plank, nailed): no game artwork ships in this app. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#E0C9A6" android:pathData="M30,44 L70,36 L72,46 L32,54 Z" />
+    <path android:fillColor="#E0C9A6" android:pathData="M36,62 L78,56 L80,66 L58,69 L62,64 L54,70 L38,72 Z" />
+    <path android:fillColor="#3E2723" android:pathData="M40,46 m-2,0 a2,2 0,1 1,4 0 a2,2 0,1 1,-4 0" />
+    <path android:fillColor="#3E2723" android:pathData="M64,41 m-2,0 a2,2 0,1 1,4 0 a2,2 0,1 1,-4 0" />
+    <path android:fillColor="#3E2723" android:pathData="M46,66 m-2,0 a2,2 0,1 1,4 0 a2,2 0,1 1,-4 0" />
+    <path android:fillColor="#3E2723" android:pathData="M72,61 m-2,0 a2,2 0,1 1,4 0 a2,2 0,1 1,-4 0" />
+</vector>
