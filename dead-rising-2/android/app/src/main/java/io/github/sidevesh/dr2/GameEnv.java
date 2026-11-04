@@ -94,8 +94,15 @@ public final class GameEnv {
         File dxc = new File(c.getApplicationInfo().nativeLibraryDir, "libdxcompiler.so");
         if (dxc.isFile()) set(p + "_DXC_LIB", dxc.getAbsolutePath());
         String drv = driver(c);
+        sPrepareError = null;
         File turnipDir = drv.equals("system") ? null : prepareTurnip(c, drv);
         set("DR2_VK_RESULT_FILE", driverResult(c).getAbsolutePath());
+        // Why this driver: printed by --diag and the game log (android_main.cpp), so a
+        // pasted device check says which step chose it.
+        set("DR2_VK_DECISION", "setting=" + driverPref(c) + ", adreno=" + adreno()
+                + " (" + socDescription() + "), chosen=" + drv
+                + (drv.equals("system") ? "" : turnipDir != null ? ", copied to " + turnipDir
+                        : ", COPY FAILED: " + sPrepareError));
         if (turnipDir != null) {
             set("DR2_VK_DRIVER", "turnip");
             set("DR2_VK_DRIVER_DIR", turnipDir.getAbsolutePath());
@@ -171,10 +178,21 @@ public final class GameEnv {
      * else (Mali, Xclipse, ...) gets its own driver; Turnip cannot run there.
      */
     static boolean adreno() {
-        String m = android.os.Build.SOC_MANUFACTURER;
+        String m = android.os.Build.SOC_MANUFACTURER, model = android.os.Build.SOC_MODEL;
+        String hw = android.os.Build.HARDWARE;
         boolean qcom = m != null && (m.equalsIgnoreCase("QTI") || m.toLowerCase().contains("qualcomm"));
+        // Snapdragon model numbers (SM8550 = 8 Gen 2), and the qcom board name.
+        qcom |= model != null && model.toUpperCase().startsWith("SM");
+        qcom |= hw != null && hw.equalsIgnoreCase("qcom");
         return qcom || new File("/dev/kgsl-3d0").exists() || new File("/sys/class/kgsl").exists();
     }
+
+    static String socDescription() {
+        return "soc " + android.os.Build.SOC_MANUFACTURER + " " + android.os.Build.SOC_MODEL
+                + ", hw " + android.os.Build.HARDWARE;
+    }
+
+    private static String sPrepareError;
 
     static String driverPref(Context c) {
         String p = prefs(c).getString(PREF_DRIVER, "auto");
@@ -227,8 +245,9 @@ public final class GameEnv {
             }
             Fs.writeSmall(stamp, want);
             return dir;
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException e) {
             Log.e(TAG, "could not prepare Turnip (" + build + "), using the system driver", e);
+            sPrepareError = e.toString() + " [source " + src + ", exists=" + src.isFile() + "]";
             return null;
         }
     }

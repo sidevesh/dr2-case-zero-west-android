@@ -208,6 +208,8 @@ extern "C" bool Dr2Android_InitVulkan()
         vkCreateInstance = CreateInstanceThenLoad;
         std::fprintf(stderr, "[android] Vulkan driver: %s (requested: %s)\n", g_driverName.c_str(),
                      want && *want ? want : "system");
+        if (const char* why = std::getenv("DR2_VK_DECISION"))
+            std::fprintf(stderr, "[android] the app's driver choice: %s\n", why);
         WriteResult("loaded: " + g_driverName + "\n" + report);
         ok = true;
     });

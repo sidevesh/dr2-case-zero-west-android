@@ -277,6 +277,8 @@ Java_io_github_sidevesh_dr2_NativeBridge_runTool(JNIEnv* env, jclass, jobjectArr
         // Which driver that was, and anything that failed on the way — in the tool's own
         // log, so a pasted device check carries it.
         std::fprintf(stderr, "[android] Vulkan driver in this process: %s\n", Dr2Android_VulkanDriver());
+        if (const char* why = std::getenv("DR2_VK_DECISION"))
+            std::fprintf(stderr, "[android]   app's choice: %s\n", why);
         const char* rp = std::getenv("DR2_VK_RESULT_FILE");
         if (FILE* f = rp ? std::fopen(rp, "r") : nullptr)
         {
