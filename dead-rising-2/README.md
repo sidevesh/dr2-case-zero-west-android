@@ -25,7 +25,8 @@ from your Xbox 360). Unofficial; not affiliated with Capcom or Microsoft.
 | `libmain.so` compiles and links for arm64 (stub image) | ✓ | ✓ |
 | APK packages (16 KB-aligned libs, Android 13+) | ✓ | ✓ |
 | PC-side shader prep tool builds and passes `--smoke` | ✓ | ✓ |
-| Real recompiled image built for Android | untested | untested |
+| Shader cache from a real package (1,367 modules, 0 failed) | ✓ | untested |
+| Real recompiled image built into an APK (57,808 functions) | ✓ | untested |
 | Boots / renders / plays on a device | untested | untested |
 
 Why there is good reason to expect it to work: upstream already shipped an **Apple
