@@ -104,7 +104,10 @@ if cap > 0:
     parts = [sorted(p) for p in parts]
 else:
     parts = [files]
-set_id = hashlib.sha256("".join(f"{a}{c}" for a, _, c in files).encode()).hexdigest()[:16]
+# The set id covers the content AND how it was cut, so parts of two different
+# splits of the same game can never be imported as one set.
+set_id = hashlib.sha256((split_mib + "|" + "|".join(
+    f"{n}:{a}" for n, part in enumerate(parts) for a, _, _ in part)).encode()).hexdigest()[:16]
 for i, part in enumerate(parts, 1):
     name = base + (f".part{i}of{len(parts)}.zip" if len(parts) > 1 else ".zip")
     manifest = "\n".join(header + [f"set={set_id}", f"part={i}", f"parts={len(parts)}"]) + "\n"
