@@ -238,10 +238,16 @@ public final class GameEnv {
         if (dst.isFile() && dst.length() == src.length() && want.equals(Fs.readSmall(stamp))) return dir;
         try {
             Fs.deleteTree(dir);
-            if (!dir.mkdirs()) throw new IOException("cannot create " + dir);
+            if (!dir.mkdirs() && !dir.isDirectory()) throw new IOException("cannot create " + dir);
+            // Into a temporary name, then renamed: a half-written driver is never loadable.
+            File tmp = new File(dir, "libvulkan_freedreno.so.part");
             try (InputStream in = new java.io.FileInputStream(src);
-                 OutputStream out = new FileOutputStream(dst)) {
+                 OutputStream out = new FileOutputStream(tmp)) {
                 Fs.copy(in, out, null);
+            }
+            if (!tmp.renameTo(dst)) {
+                dst.delete();
+                if (!tmp.renameTo(dst)) throw new IOException("cannot rename " + tmp + " to " + dst);
             }
             Fs.writeSmall(stamp, want);
             return dir;

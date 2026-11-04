@@ -42,12 +42,13 @@ final class Fs {
         f.delete();
     }
 
+    /**
+     * Whether {@code f} ITSELF is a symbolic link. Not "canonical path differs": on
+     * Android the app's own data path (/data/user/0) is a symlink to /data/data, so that
+     * test called every directory there a link and nothing under it was ever deleted.
+     */
     private static boolean isSymlink(File f) {
-        try {
-            return !f.getCanonicalFile().equals(f.getAbsoluteFile());
-        } catch (IOException e) {
-            return false;
-        }
+        return java.nio.file.Files.isSymbolicLink(f.toPath());
     }
 
     static String readSmall(File f) {
