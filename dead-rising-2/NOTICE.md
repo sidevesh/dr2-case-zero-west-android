@@ -32,8 +32,8 @@ in both games (each `#if defined(__ANDROID__)`-guarded unless stated):
 | `runtime/host/host_paths.cpp` | `ExeDir()` from `DR2_SHIPPED_DIR` (the process image is `app_process64`) |
 | `runtime/host/window.cpp` | no SDL progress window (one SDL window on Android); `--diag` skips the SDL video probe |
 | `runtime/host/first_run.cpp` | the missing-shader-cache message says how to make one for Android |
-| `runtime/host/settings.cpp` | first-run internal resolution from `DR2_DEFAULT_RES` (a default, never a pin) |
-| `runtime/gpu/vk_renderer.cpp` | recreate the window surface across Android's background/foreground cycle; identity pre-transform; do not rebuild on Android's per-frame `SUBOPTIMAL` |
+| `runtime/host/settings.cpp` | first-run internal resolution from `DR2_DEFAULT_RES` (a default, never a pin); internal resolutions down to 540 lines accepted |
+| `runtime/gpu/vk_renderer.cpp` | recreate the window surface across Android's background/foreground cycle; identity pre-transform; do not rebuild on Android's per-frame `SUBOPTIMAL`; count presents for the FPS readout; optional FSR 1.0 upscale at present (`native/android_fsr.inc`) |
 
 ## Recompilers (MIT)
 
@@ -60,6 +60,7 @@ compiled in (both runtimes require it at configure time), **offline**
 | Mesa 26.2.6 — Turnip | MIT | `libturnip_mesa.so`, the fallback Adreno driver, built here from the official release tarball |
 | libadrenotools (+ linkernsbypass) | BSD-2-Clause | statically in `libmain.so`, plus its four hook libraries; loads Turnip without root |
 | volk | MIT | statically in `libmain.so`; Vulkan entry points loaded at run time |
+| AMD FidelityFX Super Resolution 1.0 (`native/fsr/`) | MIT | compiled into `libmain.so` as SPIR-V (the present-time upscaler) |
 | DirectX Shader Compiler v1.8.2505.1 | University of Illinois/NCSA (LLVM) | `libdxcompiler.so`, built for Android by `scripts/build-dxc-android.sh`; translates shaders the game builds while it runs |
 
 The licence texts ship in the APK under `assets/licenses/`.

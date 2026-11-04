@@ -93,7 +93,7 @@ index 61237ba..ffd4e0d 100644
  // ---------------------------------------------------------------------------
  // The pipeline, end to end.
 diff --git a/runtime/gpu/vk_renderer.cpp b/runtime/gpu/vk_renderer.cpp
-index 0a43804..0a2ac44 100644
+index 0a43804..88069b5 100644
 --- a/runtime/gpu/vk_renderer.cpp
 +++ b/runtime/gpu/vk_renderer.cpp
 @@ -21,6 +21,9 @@
@@ -129,7 +129,15 @@ index 0a43804..0a2ac44 100644
      sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
      sci.presentMode = mode;
      sci.clipped = VK_TRUE;
-@@ -15234,6 +15252,41 @@ std::atomic<bool> g_swapRebuildRequest{ false };
+@@ -15231,9 +15249,49 @@ bool CreateSwapchain(uint32_t wantW, uint32_t wantH)
+ // setter is defined at global scope near VkRenderer_DumpStats.
+ std::atomic<bool> g_swapRebuildRequest{ false };
+ 
++#if defined(__ANDROID__)
++// ANDROID: FSR 1.0 at present (the launcher's UPSCALER row); see the file for why here.
++#include "android_fsr.inc"
++#endif
++
  void RecordSwapchainBlit(Image& source, uint32_t width, uint32_t height)
  {
      R->swap.acquired = UINT32_MAX;
@@ -171,7 +179,7 @@ index 0a43804..0a2ac44 100644
      if (g_swapRebuildRequest.exchange(false, std::memory_order_acq_rel))
          R->swap.rebuildWanted = true;
  
-@@ -15346,7 +15399,12 @@ void RecordSwapchainBlit(Image& source, uint32_t width, uint32_t height)
+@@ -15346,7 +15404,12 @@ void RecordSwapchainBlit(Image& source, uint32_t width, uint32_t height)
          // one. Suboptimal means the swapchain no longer matches the surface, which is a
          // stale EXTENT more often than anything else.
          R->swap.suboptimal++;
@@ -184,7 +192,29 @@ index 0a43804..0a2ac44 100644
      }
      else if (rc != VK_SUCCESS)
      {
-@@ -15703,13 +15761,23 @@ void PresentSwapchain()
+@@ -15446,6 +15509,21 @@ void RecordSwapchainBlit(Image& source, uint32_t width, uint32_t height)
+     blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+     blit.dstOffsets[0] = { fitX, fitY, 0 };
+     blit.dstOffsets[1] = { fitX + int32_t(fitW), fitY + int32_t(fitH), 1 };
++#if defined(__ANDROID__)
++    // ANDROID: FSR instead of the bilinear stretch when the frame is being ENLARGED and
++    // the player chose it; the 1:1 copy of its result is still a blit (format change).
++    Image* fsr = dr2fsr::Enabled() && (fitW > width || fitH > height)
++                     ? dr2fsr::Upscale(source, width, height, fitW, fitH)
++                     : nullptr;
++    if (fsr)
++    {
++        blit.srcOffsets[1] = { int32_t(fitW), int32_t(fitH), 1 };
++        vkCmdBlitImage(R->cmd, fsr->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
++                       R->swap.images[index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
++                       VK_FILTER_NEAREST);
++    }
++    else
++#endif
+     vkCmdBlitImage(R->cmd, source.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    R->swap.images[index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
+                    VK_FILTER_LINEAR);
+@@ -15703,13 +15781,23 @@ void PresentSwapchain()
      pi.pSwapchains = &R->swap.swapchain;
      pi.pImageIndices = &R->swap.acquired;
      const VkResult rc = vkQueuePresentKHR(R->queue, &pi);
@@ -284,7 +314,7 @@ index 563283d..31d3859 100644
      char buf[4096];
      const ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
 diff --git a/runtime/host/settings.cpp b/runtime/host/settings.cpp
-index 1784c11..b3c8c32 100644
+index 1784c11..b25a972 100644
 --- a/runtime/host/settings.cpp
 +++ b/runtime/host/settings.cpp
 @@ -152,6 +152,21 @@ void Settings_Load(const std::string& path)
@@ -309,6 +339,23 @@ index 1784c11..b3c8c32 100644
          // Printed FROM the defaults rather than as a fixed string: this line said
          // "windowed, 1280x720" whatever the build's defaults were, and the Deck
          // variant would have had it stating the wrong resolution on the one run
+@@ -462,7 +477,15 @@ void Settings_SetLanguage(int id)
+ // gpu/vk_renderer.cpp) — 4:3 and 5:4 would put the UI in a 75-80% band and stay refused.
+ bool Settings_ValidInternalRes(uint32_t w, uint32_t h)
+ {
+-    return h >= 720 && h <= 2880 && (w & 1) == 0 && w >= 1280 && w <= 6880 &&
++#if defined(__ANDROID__)
++    // ANDROID: down to 540 lines (0.75 of the title's 720) for phone GPUs — the
++    // renderer's scaling is rational and truncating (vk_renderer.cpp, gotcha 373), and
++    // the launcher offers it as EXPERIMENTAL, best with FSR. Desktop keeps 720.
++    const uint32_t minH = 540, minW = 960;
++#else
++    const uint32_t minH = 720, minW = 1280;
++#endif
++    return h >= minH && h <= 2880 && (w & 1) == 0 && w >= minW && w <= 6880 &&
+            uint64_t(w) * 10 >= uint64_t(h) * 16;
+ }
+ 
 diff --git a/runtime/host/window.cpp b/runtime/host/window.cpp
 index 654eb84..972fe53 100644
 --- a/runtime/host/window.cpp

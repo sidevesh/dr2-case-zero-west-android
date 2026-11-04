@@ -185,6 +185,14 @@ decisions, and why:
   world detail, field of view, exposure. A first launch writes *Balanced* (720p, 60 FPS
   cap, no MSAA, medium shadows, 1.0 zombie detail) instead of the desktop defaults.
   SHOW FPS counts real presents (a counter in the renderer's present path).
+- **FSR 1.0 and 540p.** The present path's bilinear stretch can be replaced by AMD
+  FidelityFX Super Resolution 1.0 (EASU + RCAS as two compute passes,
+  `native/android_fsr.inc`; the default) whenever the frame is being enlarged. On
+  Android the runtime also accepts internal resolutions down to 540 lines —
+  experimental, below the title's own 720.
+- **Gyro aiming.** The phone's rotation rate is added to the on-screen controller's
+  camera stick, always or only while the aim button (LT by default) is held, with
+  sensitivity and inversion settings.
 - **Always landscape.** SDL requests an orientation from the window's shape;
   GameActivity overrides that request.
 - **Handheld defaults.** Built with upstream's Steam Deck profile (`-DCZ_DECK=ON`), and

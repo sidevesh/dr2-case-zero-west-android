@@ -490,7 +490,8 @@ public class LauncherActivity extends Activity {
         String[] resNames = new String[heights.length];
         for (int i = 0; i < heights.length; i++) {
             int[] r = RuntimeSettings.Options.resolutionFor(this, heights[i]);
-            resNames[i] = heights[i] + "p  (" + r[0] + "×" + r[1] + ")";
+            resNames[i] = heights[i] + "p  (" + r[0] + "×" + r[1] + ")"
+                    + (heights[i] < 720 ? "  · experimental" : "");
             if (r[0] == res[0] && r[1] == res[1]) resIdx = i;
         }
         if (resIdx < 0) {
@@ -498,14 +499,29 @@ public class LauncherActivity extends Activity {
             resIdx = resNames.length - 1;
         }
         final int customRes = resIdx == heights.length ? resIdx : -1;
-        stepper("Internal resolution", "What the game renders at. The biggest single cost: 720p is "
-                + "the Xbox 360's own", resNames, resIdx, i -> {
+        stepper("Internal resolution", "What the game renders at — the biggest single cost. 720p is "
+                + "the Xbox 360's own; 540p is below it (experimental: thin lines and small text "
+                + "may suffer), best with FSR", resNames, resIdx, i -> {
                     if (i == customRes) return;
                     int[] r = RuntimeSettings.Options.resolutionFor(this, heights[i]);
                     s.setResolution(r[0], r[1]);
                     s.save();
                     showTab(0);
                 });
+        SharedPreferences gp = GameEnv.prefs(this);
+        boolean fsrOn = gp.getString(GameEnv.PREF_UPSCALER, "fsr").equals("fsr");
+        stepper("Upscaler", "How the frame is enlarged to the screen. FSR 1.0 (AMD FidelityFX) "
+                + "keeps edges sharp; bilinear is a plain soft stretch", new String[] { "FSR 1.0", "Bilinear" },
+                fsrOn ? 0 : 1, i -> {
+                    gp.edit().putString(GameEnv.PREF_UPSCALER, i == 0 ? "fsr" : "bilinear").apply();
+                    showTab(0);
+                });
+        if (fsrOn) {
+            int[] sh = { 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 };
+            stepper("FSR sharpness", null, labels10(sh, "%"),
+                    nearest(sh, gp.getInt(GameEnv.PREF_FSR_SHARP, 80)),
+                    i -> gp.edit().putInt(GameEnv.PREF_FSR_SHARP, sh[i]).apply());
+        }
         int[] fps = RuntimeSettings.Options.FPS;
         String[] fpsNames = { "30 FPS", "60 FPS", "90 FPS", "120 FPS", "Unlocked" };
         stepper("Frame-rate cap", "30 runs cooler and steadier for longer sessions; the Xbox 360 "
@@ -608,6 +624,37 @@ public class LauncherActivity extends Activity {
         toggle("Haptic feedback", "A short buzz on each button press",
                 p.getBoolean(GameEnv.PREF_HAPTICS, true),
                 on -> p.edit().putBoolean(GameEnv.PREF_HAPTICS, on).apply());
+        section("GYRO AIMING");
+        android.hardware.SensorManager sm = getSystemService(android.hardware.SensorManager.class);
+        boolean hasGyro = sm != null && sm.getDefaultSensor(android.hardware.Sensor.TYPE_GYROSCOPE) != null;
+        String[] gModes = { "off", "aim", "always" };
+        int gm = java.util.Arrays.asList(gModes).indexOf(p.getString(GameEnv.PREF_GYRO_MODE, "aim"));
+        stepper("Gyro", hasGyro ? "Turn the phone to move the camera, on top of the camera stick"
+                        : "This phone has no gyroscope", new String[] { "Off", "While aiming", "Always" },
+                Math.max(0, gm), i -> {
+                    p.edit().putString(GameEnv.PREF_GYRO_MODE, gModes[i]).apply();
+                    showTab(1);
+                });
+        if (gm != 0) {
+            String[] btns = { "LT", "RT", "LB", "RB" };
+            if (gm == 1) {
+                int bi = java.util.Arrays.asList(btns).indexOf(p.getString(GameEnv.PREF_GYRO_BUTTON, "LT"));
+                stepper("Aim button", "Gyro is on while this on-screen button is held — the one the "
+                        + "game aims with (a gun's or a thrown item's aim)", btns, Math.max(0, bi),
+                        i -> p.edit().putString(GameEnv.PREF_GYRO_BUTTON, btns[i]).apply());
+            }
+            int[] gs = { 25, 50, 75, 100, 125, 150, 200, 250, 300, 400 };
+            stepper("Gyro sensitivity", null, labels10(gs, "%"),
+                    nearest(gs, p.getInt(GameEnv.PREF_GYRO_SENS, 100)),
+                    i -> p.edit().putInt(GameEnv.PREF_GYRO_SENS, gs[i]).apply());
+            toggle("Invert horizontal", null, p.getBoolean(GameEnv.PREF_GYRO_INVERT_X, false),
+                    on -> p.edit().putBoolean(GameEnv.PREF_GYRO_INVERT_X, on).apply());
+            toggle("Invert vertical", null, p.getBoolean(GameEnv.PREF_GYRO_INVERT_Y, false),
+                    on -> p.edit().putBoolean(GameEnv.PREF_GYRO_INVERT_Y, on).apply());
+        }
+        note("Gyro works with the on-screen controls; with a physical controller connected the "
+                + "game reads that controller only.");
+
         note("Layout: left half = move stick (it appears where your thumb lands), right half = "
                 + "camera. Face buttons bottom right, triggers and bumpers along the top, BACK and "
                 + "START top centre, D-pad and stick clicks bottom centre.\n\n"

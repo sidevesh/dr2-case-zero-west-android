@@ -1,0 +1,65 @@
+// dr2_fsr.comp — AMD FidelityFX Super Resolution 1.0 for the present path
+// (native/android_fsr.inc). One source, two passes, chosen with -DFSR_PASS_EASU=1 or
+// -DFSR_PASS_RCAS=1 by scripts/gen-fsr-shaders.sh:
+//   EASU  edge-adaptive upscale: the internal frame -> the display-size image
+//   RCAS  robust contrast-adaptive sharpening of that image
+// The 32-bit path (no FP16 requirement), as in AMD's own sample's fallback, and the
+// sample's 16x16-pixels-per-64-thread-group dispatch.
+#version 450
+#extension GL_GOOGLE_include_directive : enable
+
+layout(local_size_x = 64) in;
+
+layout(push_constant) uniform Pc
+{
+    uvec4 con0;
+    uvec4 con1;
+    uvec4 con2;
+    uvec4 con3;
+    uvec4 outSize;   // .xy = output extent
+} pc;
+
+layout(set = 0, binding = 0) uniform sampler2D InputTexture;
+layout(set = 0, binding = 1, rgba8) uniform writeonly image2D OutputTexture;
+
+#define A_GPU 1
+#define A_GLSL 1
+#include "ffx_a.h"
+
+#if FSR_PASS_EASU
+#define FSR_EASU_F 1
+AF4 FsrEasuRF(AF2 p) { return textureGather(InputTexture, p, 0); }
+AF4 FsrEasuGF(AF2 p) { return textureGather(InputTexture, p, 1); }
+AF4 FsrEasuBF(AF2 p) { return textureGather(InputTexture, p, 2); }
+#else
+#define FSR_RCAS_F 1
+AF4 FsrRcasLoadF(ASU2 p) { return texelFetch(InputTexture, p, 0); }
+void FsrRcasInputF(inout AF1 r, inout AF1 g, inout AF1 b) {}
+#endif
+
+#include "ffx_fsr1.h"
+
+void Filter(AU2 pos)
+{
+    if (pos.x >= pc.outSize.x || pos.y >= pc.outSize.y)
+        return;
+    AF3 c;
+#if FSR_PASS_EASU
+    FsrEasuF(c, pos, pc.con0, pc.con1, pc.con2, pc.con3);
+#else
+    FsrRcasF(c.r, c.g, c.b, pos, pc.con0);
+#endif
+    imageStore(OutputTexture, ASU2(pos), AF4(c, 1.0));
+}
+
+void main()
+{
+    AU2 gxy = ARmp8x8(gl_LocalInvocationID.x) + AU2(gl_WorkGroupID.x << 4u, gl_WorkGroupID.y << 4u);
+    Filter(gxy);
+    gxy.x += 8u;
+    Filter(gxy);
+    gxy.y += 8u;
+    Filter(gxy);
+    gxy.x -= 8u;
+    Filter(gxy);
+}

@@ -113,7 +113,8 @@ final class RuntimeSettings {
         static final int PRESET_BATTERY = 0, PRESET_BALANCED = 1, PRESET_QUALITY = 2;
         static final String[] PRESETS = { "Battery saver", "Balanced", "Quality" };
 
-        static final int[] HEIGHTS = { 720, 900, 1080, 1440 };
+        // 540 is below the title's own 720 (Android only; see the patched settings.cpp).
+        static final int[] HEIGHTS = { 540, 720, 900, 1080, 1440 };
         static final int[] FPS = { 30, 60, 90, 120, 0 };
         static final int[] MSAA = { 0, 2, 4 };
         static final String[] SHADOWS = { "Low", "Medium", "High" };

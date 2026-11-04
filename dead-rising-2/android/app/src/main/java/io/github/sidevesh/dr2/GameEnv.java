@@ -44,6 +44,13 @@ public final class GameEnv {
     public static final String PREF_HAPTICS = "touch_haptics";
     public static final String PREF_SHOW_FPS = "show_fps";
     public static final String PREF_SUSTAINED = "sustained_perf";
+    public static final String PREF_GYRO_MODE = "gyro_mode";       // off | aim | always
+    public static final String PREF_GYRO_BUTTON = "gyro_button";   // LT | RT | LB | RB
+    public static final String PREF_GYRO_SENS = "gyro_sens";       // percent, 25..400
+    public static final String PREF_GYRO_INVERT_X = "gyro_invert_x";
+    public static final String PREF_GYRO_INVERT_Y = "gyro_invert_y";
+    public static final String PREF_UPSCALER = "upscaler";         // bilinear | fsr
+    public static final String PREF_FSR_SHARP = "fsr_sharpness";   // percent, 0..100
 
     private GameEnv() {}
 
@@ -128,6 +135,12 @@ public final class GameEnv {
         // default — the runtime ignores it once a settings file exists (patched
         // host/settings.cpp), so the in-game RESOLUTION row keeps working.
         set("DR2_DEFAULT_RES", defaultResolution(c));
+        // The upscaler at present (native/android_fsr.inc): FSR 1.0 or the plain blit.
+        // Sharpness: 100% = 0 stops (sharpest) .. 0% = 2 stops.
+        SharedPreferences sp = prefs(c);
+        set("DR2_FSR", sp.getString(PREF_UPSCALER, "fsr").equals("fsr") ? "1" : "0");
+        set("DR2_FSR_SHARPNESS", String.format(java.util.Locale.US, "%.2f",
+                2.0 * (1.0 - sp.getInt(PREF_FSR_SHARP, 80) / 100.0)));
         // The player's own KEY=VALUE lines (the launcher's ADVANCED box) win over all of it.
         for (String line : prefs(c).getString(PREF_EXTRA_ENV, "").split("\n")) {
             line = line.trim();

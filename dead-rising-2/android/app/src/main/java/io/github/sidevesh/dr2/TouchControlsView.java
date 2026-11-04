@@ -5,6 +5,11 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.RectF;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
+import android.view.Surface;
 import android.view.DisplayCutout;
 import android.view.HapticFeedbackConstants;
 import android.view.KeyEvent;
@@ -38,8 +43,14 @@ import java.util.List;
  * (launcher: SETTINGS > CONTROLS). Latency: touches are dispatched unbuffered (not
  * batched to the display's frame), and the view redraws only when what it shows
  * changed.
+ *
+ * GYRO AIMING: the phone's rotation rate is added to the camera (right) stick —
+ * always, or only while the aim button is held (launcher: CONTROLS > GYRO). It is
+ * velocity-as-stick, the way a game without native gyro support has to take it: turn
+ * the phone and the camera turns at a speed that follows how fast you turn it, with a
+ * small anti-deadzone so slow corrections clear the game's own stick deadzone.
  */
-public class TouchControlsView extends View {
+public class TouchControlsView extends View implements SensorEventListener {
     // Not a real InputDevice id (those are small positive integers).
     private static final int DEVICE_ID = 0x0D2C7001;
 
@@ -64,6 +75,17 @@ public class TouchControlsView extends View {
     private final float mOpacity, mScale;
     private final boolean mHaptics;
     private static final long DIM_AFTER_MS = 4000;
+
+    // Gyro (see the class comment).
+    private final String mGyroMode;      // off | aim | always
+    private final String mGyroButton;    // LT | RT | LB | RB: the button that aims
+    private final float mGyroSens;       // stick units per rad/s
+    private final boolean mGyroInvertX, mGyroInvertY;
+    private SensorManager mSensors;
+    private float mTouchRX, mTouchRY;    // the camera stick's own (touch) deflection
+    private float mGyroX, mGyroY;        // the gyro's, already filtered and scaled
+    private static final float GYRO_ANTI_DEADZONE = 0.18f;
+    private static final float GYRO_NOISE = 0.03f;    // rad/s (~1.7 deg/s) treated as still
     private static final float DIM_TO = 0.45f;
 
     /** A button: a round or rectangular hit area that sends a key or drives a trigger axis. */
@@ -108,6 +130,11 @@ public class TouchControlsView extends View {
         mOpacity = Math.max(0.2f, Math.min(1f, sp.getInt(GameEnv.PREF_TOUCH_OPACITY, 60) / 100f));
         mScale = Math.max(0.7f, Math.min(1.5f, sp.getInt(GameEnv.PREF_TOUCH_SCALE, 100) / 100f));
         mHaptics = sp.getBoolean(GameEnv.PREF_HAPTICS, true);
+        mGyroMode = sp.getString(GameEnv.PREF_GYRO_MODE, "aim");
+        mGyroButton = sp.getString(GameEnv.PREF_GYRO_BUTTON, "LT");
+        mGyroSens = 0.55f * Math.max(0.25f, Math.min(4f, sp.getInt(GameEnv.PREF_GYRO_SENS, 100) / 100f));
+        mGyroInvertX = sp.getBoolean(GameEnv.PREF_GYRO_INVERT_X, false);
+        mGyroInvertY = sp.getBoolean(GameEnv.PREF_GYRO_INVERT_Y, false);
         mFill.setColor(Color.argb(0x30, 0, 0, 0));
         mFillDown.setColor(Color.argb(0x55, 0xFF, 0xFF, 0xFF));
         mStroke.setColor(Color.argb(0x8C, 0xFF, 0xFF, 0xFF));
@@ -150,6 +177,72 @@ public class TouchControlsView extends View {
         SDLControllerManager.onNativeJoy(DEVICE_ID, AX_LT, -1f);
         SDLControllerManager.onNativeJoy(DEVICE_ID, AX_RT, -1f);
         mAttached = true;
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        if (mGyroMode.equals("off")) return;
+        mSensors = (SensorManager) getContext().getSystemService(Context.SENSOR_SERVICE);
+        Sensor g = mSensors != null ? mSensors.getDefaultSensor(Sensor.TYPE_GYROSCOPE) : null;
+        if (g != null) mSensors.registerListener(this, g, 10_000);   // 100 Hz
+        else mSensors = null;
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        if (mSensors != null) mSensors.unregisterListener(this);
+        mSensors = null;
+        super.onDetachedFromWindow();
+    }
+
+    private boolean gyroActive() {
+        if (mGyroMode.equals("always")) return true;
+        if (!mGyroMode.equals("aim")) return false;
+        for (Btn b : mButtons) if (b.label.equals(mGyroButton)) return b.pointer >= 0;
+        return false;
+    }
+
+    @Override
+    public void onSensorChanged(SensorEvent ev) {
+        if (!mAttached) return;
+        if (!gyroActive()) {
+            if (mGyroX != 0f || mGyroY != 0f) { mGyroX = mGyroY = 0f; pushRight(); }
+            return;
+        }
+        // Device axes -> screen axes for a landscape hold. Yaw (turning left/right) is
+        // rotation about the device's X axis, pitch about its Y; which way is which
+        // depends on which way up the phone is (ROTATION_90 vs ROTATION_270). Signs
+        // chosen so the camera follows the phone like a viewfinder.
+        int rot = getDisplay() != null ? getDisplay().getRotation() : Surface.ROTATION_90;
+        float yaw = ev.values[0], pitch = ev.values[1];
+        float sx, sy;
+        if (rot == Surface.ROTATION_270) { sx = yaw; sy = -pitch; }
+        else { sx = -yaw; sy = pitch; }
+        if (mGyroInvertX) sx = -sx;
+        if (mGyroInvertY) sy = -sy;
+        mGyroX = shape(sx * mGyroSens, Math.abs(yaw));
+        mGyroY = shape(sy * mGyroSens, Math.abs(pitch));
+        pushRight();
+    }
+
+    /** Noise floor, then an anti-deadzone so slow aiming clears the game's stick deadzone. */
+    private static float shape(float v, float rate) {
+        if (rate < GYRO_NOISE || v == 0f) return 0f;
+        // The anti-deadzone fades in over the first few degrees a second, so the
+        // tremor of a hand holding still does not jitter the camera.
+        float ramp = Math.min(1f, (rate - GYRO_NOISE) / 0.05f);
+        float m = Math.min(1f, Math.abs(v));
+        return Math.signum(v) * Math.min(1f, GYRO_ANTI_DEADZONE * ramp + (1f - GYRO_ANTI_DEADZONE) * m);
+    }
+
+    @Override
+    public void onAccuracyChanged(Sensor sensor, int accuracy) {}
+
+    /** The camera stick the game sees: the touch stick plus the gyro. */
+    private void pushRight() {
+        SDLControllerManager.onNativeJoy(DEVICE_ID, mRight.axisX, clamp(mTouchRX + mGyroX));
+        SDLControllerManager.onNativeJoy(DEVICE_ID, mRight.axisY, clamp(mTouchRY + mGyroY));
     }
 
     void detach() {
@@ -404,8 +497,13 @@ public class TouchControlsView extends View {
             if (s.pointer == id) {
                 s.pointer = -1;
                 mDirty = true;
-                SDLControllerManager.onNativeJoy(DEVICE_ID, s.axisX, 0f);
-                SDLControllerManager.onNativeJoy(DEVICE_ID, s.axisY, 0f);
+                if (s == mRight) {
+                    mTouchRX = mTouchRY = 0f;
+                    pushRight();
+                } else {
+                    SDLControllerManager.onNativeJoy(DEVICE_ID, s.axisX, 0f);
+                    SDLControllerManager.onNativeJoy(DEVICE_ID, s.axisY, 0f);
+                }
             }
         }
     }
@@ -421,10 +519,16 @@ public class TouchControlsView extends View {
     }
 
     private void stick(Stick s) {
-        float vx = (s.x - s.ox) / s.radius, vy = (s.y - s.oy) / s.radius;
+        float vx = clamp((s.x - s.ox) / s.radius), vy = clamp((s.y - s.oy) / s.radius);
         // Android's axis convention, which SDL keeps: +Y is down.
-        SDLControllerManager.onNativeJoy(DEVICE_ID, s.axisX, clamp(vx));
-        SDLControllerManager.onNativeJoy(DEVICE_ID, s.axisY, clamp(vy));
+        if (s == mRight) {
+            mTouchRX = vx;
+            mTouchRY = vy;
+            pushRight();
+            return;
+        }
+        SDLControllerManager.onNativeJoy(DEVICE_ID, s.axisX, vx);
+        SDLControllerManager.onNativeJoy(DEVICE_ID, s.axisY, vy);
     }
 
     private void dpad(float x, float y) {
