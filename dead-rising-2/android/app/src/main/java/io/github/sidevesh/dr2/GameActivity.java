@@ -1,13 +1,21 @@
 package io.github.sidevesh.dr2;
 
 import android.content.Context;
+import android.content.pm.ActivityInfo;
+import android.graphics.Color;
+import android.graphics.Typeface;
 import android.hardware.input.InputManager;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
+import android.view.Gravity;
 import android.view.InputDevice;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.widget.RelativeLayout;
+import android.widget.TextView;
 
 import org.libsdl.app.SDLActivity;
 import org.libsdl.app.SDLSurface;
@@ -19,6 +27,9 @@ import org.libsdl.app.SDLSurface;
  */
 public class GameActivity extends SDLActivity {
     private TouchControlsView mTouch;
+    private TextView mFps;
+    private final Handler mHandler = new Handler(Looper.getMainLooper());
+    private long mFpsLastCount = -1, mFpsLastTime;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -26,10 +37,67 @@ public class GameActivity extends SDLActivity {
         // paths from the environment the moment it starts.
         GameEnv.apply(this);
         super.onCreate(savedInstanceState);
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        // Sustained performance: clocks the device can hold indefinitely, instead of a
+        // fast first few minutes and then heavy throttling. Not every phone has it.
+        if (GameEnv.prefs(this).getBoolean(GameEnv.PREF_SUSTAINED, false)) {
+            android.os.PowerManager pm = getSystemService(android.os.PowerManager.class);
+            if (pm != null && pm.isSustainedPerformanceModeSupported())
+                getWindow().setSustainedPerformanceMode(true);
+        }
         hideSystemBars();
         maybeAddTouchControls();
+        maybeAddFpsCounter();
     }
+
+    /**
+     * SDL asks for an orientation from the window's shape whenever the runtime creates
+     * or resizes its window, and for a resizable window that is "any" — which let the
+     * game start in portrait. A console game on a phone is landscape, either way up.
+     */
+    @Override
+    public void setOrientationBis(int w, int h, boolean resizable, String hint) {
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+    }
+
+    /** SHOW FPS: frames actually presented (native counter), twice a second. */
+    private void maybeAddFpsCounter() {
+        if (!GameEnv.prefs(this).getBoolean(GameEnv.PREF_SHOW_FPS, false) || mLayout == null) return;
+        mFps = new TextView(this);
+        mFps.setTextColor(Color.WHITE);
+        mFps.setTextSize(12);
+        mFps.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        mFps.setShadowLayer(3f, 0f, 0f, Color.BLACK);
+        int pad = Math.round(6 * getResources().getDisplayMetrics().density);
+        mFps.setPadding(pad * 2, pad, pad, pad);
+        mFps.setGravity(Gravity.START);
+        RelativeLayout.LayoutParams lp = new RelativeLayout.LayoutParams(
+                RelativeLayout.LayoutParams.WRAP_CONTENT, RelativeLayout.LayoutParams.WRAP_CONTENT);
+        lp.addRule(RelativeLayout.ALIGN_PARENT_BOTTOM);
+        lp.addRule(RelativeLayout.ALIGN_PARENT_START);
+        mLayout.addView(mFps, lp);
+        mHandler.post(mFpsTick);
+    }
+
+    private final Runnable mFpsTick = new Runnable() {
+        @Override public void run() {
+            long now = SystemClock.elapsedRealtime();
+            long n;
+            try {
+                n = NativeBridge.presentCount();
+            } catch (UnsatisfiedLinkError e) {
+                return;
+            }
+            if (mFpsLastCount >= 0 && now > mFpsLastTime) {
+                double fps = (n - mFpsLastCount) * 1000.0 / (now - mFpsLastTime);
+                mFps.setText(String.format(java.util.Locale.US, "%.0f FPS", fps));
+            }
+            mFpsLastCount = n;
+            mFpsLastTime = now;
+            mHandler.postDelayed(this, 500);
+        }
+    };
 
     @Override
     protected String[] getLibraries() {
@@ -86,6 +154,7 @@ public class GameActivity extends SDLActivity {
 
     @Override
     protected void onDestroy() {
+        mHandler.removeCallbacks(mFpsTick);
         if (mTouch != null) mTouch.detach();
         super.onDestroy();
     }

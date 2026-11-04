@@ -30,4 +30,7 @@ public final class NativeBridge {
 
     /** A new window surface exists; the renderer may build a swapchain on it. */
     public static native void surfaceRestored();
+
+    /** Frames the renderer has presented since the process started (the FPS readout). */
+    public static native long presentCount();
 }

@@ -40,6 +40,9 @@ android {
             buildConfigField 'String', 'TITLE_ID', '"58410A8D"'
             buildConfigField 'String', 'PACKAGE_SIZE', '"about 825 MB"'
             buildConfigField 'boolean', 'NATIVE_STUB', "${stubFor('casezero')}"
+            // Where the runtime keeps its settings file (host_paths.cpp SavedGames + main.cpp).
+            buildConfigField 'String', 'SAVE_FOLDER', '"Dead Rising 2 Case Zero"'
+            buildConfigField 'String', 'SETTINGS_FILE', '"cz_settings.txt"'
         }
         casewest {
             dimension 'game'
@@ -52,6 +55,9 @@ android {
             buildConfigField 'String', 'TITLE_ID', '"58410B00"'
             buildConfigField 'String', 'PACKAGE_SIZE', '"about 1.2 GB"'
             buildConfigField 'boolean', 'NATIVE_STUB', "${stubFor('casewest')}"
+            // Where the runtime keeps its settings file (host_paths.cpp SavedGames + main.cpp).
+            buildConfigField 'String', 'SAVE_FOLDER', '"Dead Rising 2 Case West"'
+            buildConfigField 'String', 'SETTINGS_FILE', '"cw_settings.txt"'
         }
     }
 

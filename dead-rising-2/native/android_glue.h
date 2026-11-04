@@ -36,6 +36,9 @@ void Dr2Android_SurfaceReleased();
 bool Dr2Android_InitVulkan();
 const char* Dr2Android_VulkanDriver();
 
+// THE FPS READOUT: the renderer calls this after every successful vkQueuePresentKHR.
+void Dr2Android_FramePresented();
+
 }  // extern "C"
 
 #include <functional>

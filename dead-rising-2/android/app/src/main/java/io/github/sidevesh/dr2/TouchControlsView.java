@@ -2,12 +2,15 @@ package io.github.sidevesh.dr2;
 
 import android.content.Context;
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.RectF;
+import android.view.DisplayCutout;
 import android.view.HapticFeedbackConstants;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.WindowInsets;
 
 import org.libsdl.app.SDLControllerManager;
 
@@ -28,6 +31,13 @@ import java.util.List;
  *   right half   the camera stick, floating, wherever no button is
  *   bottom right A B X Y          top corners LT LB / RB RT
  *   top centre   BACK  START      bottom centre-left D-pad, bottom centre L3 R3
+ *
+ * Drawn to stay out of the way: thin outlines over a faint dark fill, the face
+ * letters in the controller's colours, the whole overlay dimming further a few
+ * seconds after the last touch. Opacity, size and haptics are the player's
+ * (launcher: SETTINGS > CONTROLS). Latency: touches are dispatched unbuffered (not
+ * batched to the display's frame), and the view redraws only when what it shows
+ * changed.
  */
 public class TouchControlsView extends View {
     // Not a real InputDevice id (those are small positive integers).
@@ -44,10 +54,17 @@ public class TouchControlsView extends View {
     private final Paint mFill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint mFillDown = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint mStroke = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint mStrokeDown = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint mText = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint mFace = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final RectF mTmp = new RectF();
 
     private boolean mAttached;
     private float u;
+    private final float mOpacity, mScale;
+    private final boolean mHaptics;
+    private static final long DIM_AFTER_MS = 4000;
+    private static final float DIM_TO = 0.45f;
 
     /** A button: a round or rectangular hit area that sends a key or drives a trigger axis. */
     private static final class Btn {
@@ -55,6 +72,7 @@ public class TouchControlsView extends View {
         final int keycode;       // Android keycode SDL translates, or 0 for a trigger
         final int triggerAxis;   // AX_LT / AX_RT, or -1
         final boolean round;
+        int faceColor;           // 0 = the plain label colour
         final RectF r = new RectF();
         int pointer = -1;
         Btn(String label, int keycode, int triggerAxis, boolean round) {
@@ -78,6 +96,7 @@ public class TouchControlsView extends View {
     private final List<Btn> mButtons = new ArrayList<>();
     private final Stick mLeft = new Stick(0, 1);
     private final Stick mRight = new Stick(2, 3);
+    private final Stick[] mSticks = { mLeft, mRight };
     // The D-pad: one control so a thumb can roll between directions.
     private final RectF mDpad = new RectF();
     private int mDpadPointer = -1;
@@ -85,13 +104,22 @@ public class TouchControlsView extends View {
 
     public TouchControlsView(Context c) {
         super(c);
-        mFill.setColor(0x40FFFFFF);
-        mFillDown.setColor(0x90FFFFFF);
-        mStroke.setColor(0xB0FFFFFF);
+        android.content.SharedPreferences sp = GameEnv.prefs(c);
+        mOpacity = Math.max(0.2f, Math.min(1f, sp.getInt(GameEnv.PREF_TOUCH_OPACITY, 60) / 100f));
+        mScale = Math.max(0.7f, Math.min(1.5f, sp.getInt(GameEnv.PREF_TOUCH_SCALE, 100) / 100f));
+        mHaptics = sp.getBoolean(GameEnv.PREF_HAPTICS, true);
+        mFill.setColor(Color.argb(0x30, 0, 0, 0));
+        mFillDown.setColor(Color.argb(0x55, 0xFF, 0xFF, 0xFF));
+        mStroke.setColor(Color.argb(0x8C, 0xFF, 0xFF, 0xFF));
         mStroke.setStyle(Paint.Style.STROKE);
-        mText.setColor(0xE0FFFFFF);
+        mStrokeDown.setColor(Color.argb(0xE0, 0xFF, 0xFF, 0xFF));
+        mStrokeDown.setStyle(Paint.Style.STROKE);
+        mText.setColor(Color.argb(0xC8, 0xFF, 0xFF, 0xFF));
         mText.setTextAlign(Paint.Align.CENTER);
         mText.setFakeBoldText(true);
+        mFace.setTextAlign(Paint.Align.CENTER);
+        mFace.setFakeBoldText(true);
+        setAlpha(mOpacity);
         mButtons.add(new Btn("A", KeyEvent.KEYCODE_BUTTON_A, -1, true));
         mButtons.add(new Btn("B", KeyEvent.KEYCODE_BUTTON_B, -1, true));
         mButtons.add(new Btn("X", KeyEvent.KEYCODE_BUTTON_X, -1, true));
@@ -104,6 +132,11 @@ public class TouchControlsView extends View {
         mButtons.add(new Btn("START", KeyEvent.KEYCODE_BUTTON_START, -1, false));
         mButtons.add(new Btn("L3", KeyEvent.KEYCODE_BUTTON_THUMBL, -1, true));
         mButtons.add(new Btn("R3", KeyEvent.KEYCODE_BUTTON_THUMBR, -1, true));
+        btn("A").faceColor = 0xFF7DD35A;
+        btn("B").faceColor = 0xFFF0604F;
+        btn("X").faceColor = 0xFF4FA3F0;
+        btn("Y").faceColor = 0xFFF2CF4A;
+        postDelayed(mDim, DIM_AFTER_MS);
         // Register the pad once the game has had time to start SDL; a touch before
         // then registers it too (attach() is idempotent).
         postDelayed(this::attach, 2000);
@@ -130,17 +163,73 @@ public class TouchControlsView extends View {
         throw new IllegalArgumentException(label);
     }
 
+    private final Runnable mDim = new Runnable() {
+        @Override public void run() {
+            if (anyHeld()) { postDelayed(this, DIM_AFTER_MS); return; }
+            animate().alpha(mOpacity * DIM_TO).setDuration(400).start();
+        }
+    };
+
+    private boolean anyHeld() {
+        if (mLeft.pointer >= 0 || mRight.pointer >= 0 || mDpadPointer >= 0) return true;
+        for (Btn b : mButtons) if (b.pointer >= 0) return true;
+        return false;
+    }
+
+    /** Full opacity while in use; dim again a few seconds after the last touch. */
+    private void wake() {
+        removeCallbacks(mDim);
+        if (getAlpha() < mOpacity) {
+            animate().cancel();
+            setAlpha(mOpacity);
+        }
+        postDelayed(mDim, DIM_AFTER_MS);
+    }
+
+    private void buzz() {
+        if (mHaptics) performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+    }
+
     private static void circle(RectF r, float cx, float cy, float rad) {
         r.set(cx - rad, cy - rad, cx + rad, cy + rad);
     }
 
     @Override
     protected void onSizeChanged(int w, int h, int ow, int oh) {
-        u = h / 9f;
-        mStroke.setStrokeWidth(Math.max(2f, u * 0.05f));
-        mText.setTextSize(u * 0.42f);
+        layoutControls(w, h);
+    }
+
+    @Override
+    public WindowInsets onApplyWindowInsets(WindowInsets in) {
+        layoutControls(getWidth(), getHeight());
+        return super.onApplyWindowInsets(in);
+    }
+
+    private void layoutControls(int fullW, int h) {
+        if (fullW <= 0 || h <= 0) return;
+        // Keep clear of a camera cutout on either short edge: lay out in the safe band.
+        int left = 0, right = 0;
+        WindowInsets wi = getRootWindowInsets();
+        DisplayCutout cut = wi != null ? wi.getDisplayCutout() : null;
+        if (cut != null) { left = cut.getSafeInsetLeft(); right = cut.getSafeInsetRight(); }
+        int w = fullW - left - right;
+        layoutIn(w, h);
+        if (left != 0) {
+            for (Btn b : mButtons) b.r.offset(left, 0);
+            mDpad.offset(left, 0);
+            mLeft.homeX += left; mRight.homeX += left;
+        }
+        invalidate();
+    }
+
+    private void layoutIn(int w, int h) {
+        u = h / 9f * mScale;
+        mStroke.setStrokeWidth(Math.max(1.5f, u * 0.035f));
+        mStrokeDown.setStrokeWidth(Math.max(2f, u * 0.05f));
+        mText.setTextSize(u * 0.34f);
+        mFace.setTextSize(u * 0.52f);
         // Face buttons.
-        float fx = w - 3.0f * u, fy = h - 3.0f * u, off = 1.25f * u, fr = 0.68f * u;
+        float fx = w - 2.6f * u, fy = h - 2.6f * u, off = 1.2f * u, fr = 0.6f * u;
         circle(btn("A").r, fx, fy + off, fr);
         circle(btn("B").r, fx + off, fy, fr);
         circle(btn("X").r, fx - off, fy, fr);
@@ -161,30 +250,37 @@ public class TouchControlsView extends View {
         float dc = 1.25f * u;
         mDpad.set(w * 0.30f - dc, h - 1.2f * u - dc, w * 0.30f + dc, h - 1.2f * u + dc);
         // Stick homes (where they are drawn at rest).
-        mLeft.radius = mRight.radius = 1.6f * u;
-        mLeft.homeX = 2.6f * u; mLeft.homeY = h - 2.8f * u;
-        mRight.homeX = w * 0.62f; mRight.homeY = h * 0.55f;
+        mLeft.radius = mRight.radius = 1.5f * u;
+        mLeft.homeX = 2.4f * u; mLeft.homeY = h - 2.6f * u;
+        mRight.homeX = w * 0.64f; mRight.homeY = h * 0.55f;
     }
 
     @Override
     protected void onDraw(Canvas c) {
-        drawStick(c, mLeft);
-        drawStick(c, mRight);
+        drawStick(c, mLeft, true);
+        drawStick(c, mRight, false);
+        float corner = u * 0.28f;
         for (Btn b : mButtons) {
-            Paint p = b.pointer >= 0 ? mFillDown : mFill;
+            boolean down = b.pointer >= 0;
+            Paint fill = down ? mFillDown : mFill, stroke = down ? mStrokeDown : mStroke;
             if (b.round) {
                 float rad = b.r.width() / 2f;
-                c.drawCircle(b.r.centerX(), b.r.centerY(), rad, p);
-                c.drawCircle(b.r.centerX(), b.r.centerY(), rad, mStroke);
+                c.drawCircle(b.r.centerX(), b.r.centerY(), rad, fill);
+                c.drawCircle(b.r.centerX(), b.r.centerY(), rad, stroke);
             } else {
-                c.drawRoundRect(b.r, u * 0.2f, u * 0.2f, p);
-                c.drawRoundRect(b.r, u * 0.2f, u * 0.2f, mStroke);
+                c.drawRoundRect(b.r, corner, corner, fill);
+                c.drawRoundRect(b.r, corner, corner, stroke);
             }
-            float ty = b.r.centerY() - (mText.descent() + mText.ascent()) / 2f;
-            c.drawText(b.label, b.r.centerX(), ty, mText);
+            Paint t = mText;
+            if (b.faceColor != 0) {
+                mFace.setColor(down ? Color.WHITE : b.faceColor);
+                t = mFace;
+            }
+            float ty = b.r.centerY() - (t.descent() + t.ascent()) / 2f;
+            c.drawText(b.label, b.r.centerX(), ty, t);
         }
         // D-pad: four arms.
-        float cx = mDpad.centerX(), cy = mDpad.centerY(), a = mDpad.width() / 2f, t = a * 0.36f;
+        float cx = mDpad.centerX(), cy = mDpad.centerY(), a = mDpad.width() / 2f, t = a * 0.34f;
         drawArm(c, cx - t, cy - a, cx + t, cy - t, (mDpadState & 1) != 0);
         drawArm(c, cx - t, cy + t, cx + t, cy + a, (mDpadState & 2) != 0);
         drawArm(c, cx - a, cy - t, cx - t, cy + t, (mDpadState & 4) != 0);
@@ -192,18 +288,27 @@ public class TouchControlsView extends View {
     }
 
     private void drawArm(Canvas c, float l, float t, float r, float b, boolean down) {
-        RectF rf = new RectF(l, t, r, b);
-        c.drawRoundRect(rf, u * 0.1f, u * 0.1f, down ? mFillDown : mFill);
-        c.drawRoundRect(rf, u * 0.1f, u * 0.1f, mStroke);
+        mTmp.set(l, t, r, b);
+        c.drawRoundRect(mTmp, u * 0.12f, u * 0.12f, down ? mFillDown : mFill);
+        c.drawRoundRect(mTmp, u * 0.12f, u * 0.12f, down ? mStrokeDown : mStroke);
     }
 
-    private void drawStick(Canvas c, Stick s) {
+    /**
+     * A stick: a ring and a knob where the thumb is. At rest the move stick shows
+     * where it sits; the camera stick (it floats over half the screen) only a faint ring.
+     */
+    private void drawStick(Canvas c, Stick s, boolean showAtRest) {
         boolean active = s.pointer >= 0;
+        if (!active && !showAtRest) {
+            c.drawCircle(s.homeX, s.homeY, s.radius * 0.45f, mStroke);
+            return;
+        }
         float bx = active ? s.ox : s.homeX, by = active ? s.oy : s.homeY;
         c.drawCircle(bx, by, s.radius, mFill);
-        c.drawCircle(bx, by, s.radius, mStroke);
+        c.drawCircle(bx, by, s.radius, active ? mStrokeDown : mStroke);
         float kx = active ? s.x : bx, ky = active ? s.y : by;
-        c.drawCircle(kx, ky, s.radius * 0.45f, active ? mFillDown : mFill);
+        c.drawCircle(kx, ky, s.radius * 0.42f, active ? mFillDown : mFill);
+        c.drawCircle(kx, ky, s.radius * 0.42f, active ? mStrokeDown : mStroke);
     }
 
     // ---- input ---------------------------------------------------------------------
@@ -212,8 +317,15 @@ public class TouchControlsView extends View {
     public boolean onTouchEvent(MotionEvent e) {
         attach();
         int action = e.getActionMasked();
+        mDirty = false;
         switch (action) {
             case MotionEvent.ACTION_DOWN:
+                // Every move as it arrives, not batched to the next display frame:
+                // the stick reaches the game up to a frame sooner.
+                requestUnbufferedDispatch(e);
+                wake();
+                down(e.getPointerId(0), e.getX(0), e.getY(0));
+                break;
             case MotionEvent.ACTION_POINTER_DOWN: {
                 int i = e.getActionIndex();
                 down(e.getPointerId(i), e.getX(i), e.getY(i));
@@ -235,23 +347,28 @@ public class TouchControlsView extends View {
             default:
                 break;
         }
-        invalidate();
+        if (action != MotionEvent.ACTION_MOVE) wake();
+        if (mDirty) invalidate();
         return true;
     }
+
+    private boolean mDirty;
 
     private void down(int id, float x, float y) {
         for (Btn b : mButtons) {
             if (b.pointer < 0 && b.hit(x, y)) {
                 b.pointer = id;
                 press(b, true);
-                performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+                buzz();
+                mDirty = true;
                 return;
             }
         }
         if (mDpadPointer < 0 && mDpad.contains(x, y)) {
             mDpadPointer = id;
             dpad(x, y);
-            performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+            buzz();
+            mDirty = true;
             return;
         }
         Stick s = x < getWidth() / 2f ? mLeft : mRight;
@@ -260,12 +377,13 @@ public class TouchControlsView extends View {
             s.ox = s.x = x;
             s.oy = s.y = y;
             stick(s);
+            mDirty = true;
         }
     }
 
     private void move(int id, float x, float y) {
         if (id == mDpadPointer) { dpad(x, y); return; }
-        for (Stick s : new Stick[] { mLeft, mRight }) {
+        for (Stick s : mSticks) {
             if (s.pointer != id) continue;
             float dx = x - s.ox, dy = y - s.oy, d = (float) Math.hypot(dx, dy);
             if (d > s.radius) {
@@ -273,17 +391,19 @@ public class TouchControlsView extends View {
                 float k = (d - s.radius) / d;
                 s.ox += dx * k; s.oy += dy * k;
             }
+            if (s.x != x || s.y != y) mDirty = true;
             s.x = x; s.y = y;
             stick(s);
         }
     }
 
     private void up(int id) {
-        for (Btn b : mButtons) if (b.pointer == id) { b.pointer = -1; press(b, false); }
-        if (id == mDpadPointer) { mDpadPointer = -1; setDpad(0); }
-        for (Stick s : new Stick[] { mLeft, mRight }) {
+        for (Btn b : mButtons) if (b.pointer == id) { b.pointer = -1; press(b, false); mDirty = true; }
+        if (id == mDpadPointer) { mDpadPointer = -1; setDpad(0); mDirty = true; }
+        for (Stick s : mSticks) {
             if (s.pointer == id) {
                 s.pointer = -1;
+                mDirty = true;
                 SDLControllerManager.onNativeJoy(DEVICE_ID, s.axisX, 0f);
                 SDLControllerManager.onNativeJoy(DEVICE_ID, s.axisY, 0f);
             }
@@ -318,8 +438,9 @@ public class TouchControlsView extends View {
     }
 
     private void setDpad(int st) {
-        int[] keys = { KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN,
+        final int[] keys = { KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN,
                 KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT };
+        if (st != mDpadState) mDirty = true;
         for (int bit = 0; bit < 4; bit++) {
             boolean was = (mDpadState & (1 << bit)) != 0, is = (st & (1 << bit)) != 0;
             if (is && !was) SDLControllerManager.onNativePadDown(DEVICE_ID, keys[bit]);

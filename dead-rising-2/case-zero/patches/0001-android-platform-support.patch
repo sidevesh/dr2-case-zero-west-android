@@ -93,7 +93,7 @@ index 61237ba..ffd4e0d 100644
  // ---------------------------------------------------------------------------
  // The pipeline, end to end.
 diff --git a/runtime/gpu/vk_renderer.cpp b/runtime/gpu/vk_renderer.cpp
-index 0a43804..a7a39ff 100644
+index 0a43804..0a2ac44 100644
 --- a/runtime/gpu/vk_renderer.cpp
 +++ b/runtime/gpu/vk_renderer.cpp
 @@ -21,6 +21,9 @@
@@ -184,7 +184,18 @@ index 0a43804..a7a39ff 100644
      }
      else if (rc != VK_SUCCESS)
      {
-@@ -15709,7 +15767,12 @@ void PresentSwapchain()
+@@ -15703,13 +15761,23 @@ void PresentSwapchain()
+     pi.pSwapchains = &R->swap.swapchain;
+     pi.pImageIndices = &R->swap.acquired;
+     const VkResult rc = vkQueuePresentKHR(R->queue, &pi);
++#if defined(__ANDROID__)
++    // ANDROID: the launcher's optional FPS readout counts real presents (android_glue.h).
++    if (rc == VK_SUCCESS || rc == VK_SUBOPTIMAL_KHR)
++        Dr2Android_FramePresented();
++#endif
+     if (rc == VK_SUCCESS)
+         R->swap.presents++;
+     else if (rc == VK_SUBOPTIMAL_KHR)
      {
          R->swap.presents++;
          R->swap.suboptimal++;

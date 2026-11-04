@@ -138,6 +138,25 @@ extern "C" void Dr2Android_SurfaceReleased()
     g_surfaceReleased.store(true, std::memory_order_release);
 }
 
+// ---- frames presented (the in-game FPS readout) -----------------------------------------
+namespace
+{
+std::atomic<uint64_t> g_presents{ 0 };
+}
+
+extern "C" void Dr2Android_FramePresented()
+{
+    g_presents.fetch_add(1, std::memory_order_relaxed);
+}
+
+// long NativeBridge.presentCount() — polled twice a second by GameActivity when the
+// player turned SHOW FPS on.
+extern "C" JNIEXPORT jlong JNICALL
+Java_io_github_sidevesh_dr2_NativeBridge_presentCount(JNIEnv*, jclass)
+{
+    return jlong(g_presents.load(std::memory_order_relaxed));
+}
+
 // ---- DXC's large-stack thread (android_glue.h) ------------------------------------------
 namespace
 {

@@ -48,13 +48,15 @@ The renderer needs **Vulkan 1.3** with, among others, `textureCompressionBC`,
   reports `shaderInt64` absent (seen on an Adreno 740 / Galaxy S23 Ultra, Android 16),
   and every translated shader needs it. The APK carries Mesa's open-source Turnip
   driver in two builds and loads it with libadrenotools — no root:
-  **StevenMXZ Turnip 26.3.0-R6**, the default — the build
-  [LibertyRecompAndroid](https://github.com/vaduur/LibertyRecompAndroid) (GTA IV) ships and
-  that runs on a Galaxy S23 Ultra — and **Mesa 26.2.6** built here from the official
-  release, as a fallback. **GPU DRIVER** in the launcher: *Auto* (R6 on Adreno), *R6*,
-  *Mesa*, *System*. As in LibertyRecomp, the driver is copied to private storage before
-  loading, and Turnip runs in sysmem mode by default (`TU_DEBUG=sysmem`; override in
-  ADVANCED).
+  **Mesa 26.2.6**, built here from the official release — the build this game has
+  been seen running with on a Galaxy S23 Ultra, and *Auto*'s choice on Adreno — and
+  **StevenMXZ Turnip 26.3.0-R6**, the build
+  [LibertyRecompAndroid](https://github.com/vaduur/LibertyRecompAndroid) (GTA IV) ships.
+  Whichever is chosen (launcher: SETTINGS › SYSTEM › GPU DRIVER), the other is tried
+  automatically if it fails to load, before the system driver; the launcher shows what
+  the last run really loaded and why anything failed. As in LibertyRecomp, the driver
+  is copied to private storage before loading, and Turnip runs in sysmem mode by
+  default (SYSTEM › TURNIP RENDERING switches to tiled GMEM).
 - **Not yet:** Mali (most MediaTek, Tensor, older Exynos) and PowerVR GPUs — they have
   no BC texture support, and the renderer uploads the game's DXT textures as BC. A CPU
   decode fallback is the main missing piece for them (see *Roadmap*).
@@ -173,10 +175,21 @@ decisions, and why:
   below it).
 - **Touch controls are a real SDL gamepad.** `TouchControlsView` registers a virtual
   joystick through SDL's Java API; SDL maps it like any Android controller, and the
-  runtime sees a controller being plugged in. No native input code changed.
+  runtime sees a controller being plugged in. No native input code changed. Touches
+  are dispatched unbuffered (not batched to the display frame), the overlay redraws
+  only when it changes, and it dims when idle; opacity, size and haptics are settings.
+- **Settings are the game's own.** The launcher's GRAPHICS tab edits the runtime's
+  `cz_settings.txt` / `cw_settings.txt` — the file behind the in-game PC SETTINGS panel
+  — so the two never disagree: presets (Battery saver / Balanced / Quality), internal
+  resolution at the phone's shape, frame-rate cap, vsync, MSAA, shadows, zombie and
+  world detail, field of view, exposure. A first launch writes *Balanced* (720p, 60 FPS
+  cap, no MSAA, medium shadows, 1.0 zombie detail) instead of the desktop defaults.
+  SHOW FPS counts real presents (a counter in the renderer's present path).
+- **Always landscape.** SDL requests an orientation from the window's shape;
+  GameActivity overrides that request.
 - **Handheld defaults.** Built with upstream's Steam Deck profile (`-DCZ_DECK=ON`), and
-  the first-run internal resolution matches the phone's shape (e.g. 1600×720 on 20:9) —
-  as a default the in-game settings can change.
+  the first-run internal resolution matches the phone's shape (e.g. 1544×720 on an
+  S23 Ultra) — as a default the settings can change.
 - **Offline.** XenonLive (online co-op) is compiled without networking; co-op needs
   upstream's desktop launcher anyway.
 

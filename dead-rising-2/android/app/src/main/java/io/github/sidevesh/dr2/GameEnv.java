@@ -38,6 +38,12 @@ public final class GameEnv {
     public static final String PREF_TOUCH = "touch_controls";
     public static final String PREF_EXTRA_ENV = "extra_env";
     public static final String PREF_DRIVER = "gpu_driver";   // auto | r6 | mesa | system
+    public static final String PREF_TURNIP_MODE = "turnip_mode";   // sysmem | gmem
+    public static final String PREF_TOUCH_OPACITY = "touch_opacity"; // percent, 20..100
+    public static final String PREF_TOUCH_SCALE = "touch_scale";     // percent, 70..150
+    public static final String PREF_HAPTICS = "touch_haptics";
+    public static final String PREF_SHOW_FPS = "show_fps";
+    public static final String PREF_SUSTAINED = "sustained_perf";
 
     private GameEnv() {}
 
@@ -53,6 +59,8 @@ public final class GameEnv {
     public static File shipped(Context c)     { return new File(c.getFilesDir(), "shipped"); }
     public static File runtimeLog(Context c)  { return new File(root(c), BuildConfig.RUNTIME_LOG); }
     public static File toolLog(Context c)     { return new File(root(c), "launcher_tool.log"); }
+    /** What the game process's driver loader did last (native/android_vulkan.cpp). */
+    public static File driverResult(Context c) { return new File(root(c), "last_driver.txt"); }
 
     public static SharedPreferences prefs(Context c) {
         return c.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
@@ -80,18 +88,32 @@ public final class GameEnv {
         if (dxc.isFile()) set(p + "_DXC_LIB", dxc.getAbsolutePath());
         String drv = driver(c);
         File turnipDir = drv.equals("system") ? null : prepareTurnip(c, drv);
+        set("DR2_VK_RESULT_FILE", driverResult(c).getAbsolutePath());
         if (turnipDir != null) {
             set("DR2_VK_DRIVER", "turnip");
             set("DR2_VK_DRIVER_DIR", turnipDir.getAbsolutePath());
             set("DR2_VK_DRIVER_FILE", "libvulkan_freedreno.so");
             set("DR2_VK_DRIVER_LABEL", label(drv));
-            // Turnip's direct (sysmem) rendering rather than tiled GMEM: LibertyRecomp
-            // measured GMEM ~15% slower on a renderer with many small passes and
-            // resolves, which this one is too. TU_DEBUG= in ADVANCED restores GMEM.
-            set("TU_DEBUG", "sysmem");
+            // The other bundled build, tried when this one does not load (a build that
+            // works on one firmware can fail to load on another), before the system
+            // driver — which on Adreno 7xx cannot run the renderer at all.
+            String other = drv.equals("r6") ? "mesa" : "r6";
+            File otherDir = prepareTurnip(c, other);
+            if (otherDir != null) {
+                set("DR2_VK_DRIVER2_DIR", otherDir.getAbsolutePath());
+                set("DR2_VK_DRIVER2_FILE", "libvulkan_freedreno.so");
+                set("DR2_VK_DRIVER2_LABEL", label(other));
+            }
+            // Turnip's direct (sysmem) rendering by default rather than tiled GMEM:
+            // LibertyRecomp measured GMEM ~15% slower on a renderer with many small
+            // passes and resolves, which this one is too. SETTINGS > SYSTEM switches.
+            set("TU_DEBUG", prefs(c).getString(PREF_TURNIP_MODE, "sysmem").equals("gmem") ? "" : "sysmem");
         } else {
             set("DR2_VK_DRIVER", "system");
         }
+        // The launcher's graphics settings live in the runtime's own settings file; a
+        // phone gets phone defaults the first time instead of a desktop GPU's.
+        RuntimeSettings.ensurePhoneDefaults(c);
         // The desktop launcher is SDL-drawn and replaced on Android by LauncherActivity.
         set(p + "_LAUNCHER", "0");
         // SDL hints read from the environment. Touches must not turn into mouse events:
@@ -100,6 +122,8 @@ public final class GameEnv {
         set("SDL_ANDROID_TRAP_BACK_BUTTON", "1");
         // SDL would otherwise poll the accelerometer as a fake joystick: battery, no use.
         set("SDL_ACCELEROMETER_AS_JOYSTICK", "0");
+        // Landscape only (GameActivity also refuses SDL's own orientation requests).
+        set("SDL_IOS_ORIENTATIONS", "LandscapeLeft LandscapeRight");
         // The first-run internal resolution: 720 lines at the screen's shape. Only a
         // default — the runtime ignores it once a settings file exists (patched
         // host/settings.cpp), so the in-game RESOLUTION row keeps working.
@@ -144,11 +168,21 @@ public final class GameEnv {
         return p.equals("turnip") ? "r6" : p;   // the setting's name before R6 was bundled
     }
 
-    /** The build to load: "r6", "mesa" or "system". "auto" is R6 on Adreno. */
+    /**
+     * The build to load: "r6", "mesa" or "system". "auto" is Mesa's Turnip on Adreno —
+     * the build this game has been seen running with on an Adreno 740 — with R6 as its
+     * fallback (apply() passes the other build as DR2_VK_DRIVER2_*).
+     */
     static String driver(Context c) {
         String p = driverPref(c);
-        if (p.equals("auto")) return adreno() ? "r6" : "system";
+        if (p.equals("auto")) return adreno() ? "mesa" : "system";
         return p;
+    }
+
+    /** What the last game run actually loaded, and anything that failed before it. */
+    static String lastDriverReport(Context c) {
+        String s = Fs.readSmall(driverResult(c));
+        return s == null ? null : s.trim();
     }
 
     static String label(String build) {
