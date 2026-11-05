@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A camera — Frank West is a photojournalist — against the dusk: Case West.
+     Original art, no game assets. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- body and viewfinder hump -->
+    <path android:fillColor="#1A1423"
+        android:pathData="M32,42 L44,42 L48,36 L60,36 L64,42 L76,42 C78.5,42 80,43.5 80,46 L80,70 C80,72.5 78.5,74 76,74 L32,74 C29.5,74 28,72.5 28,70 L28,46 C28,43.5 29.5,42 32,42 Z" />
+    <!-- lens -->
+    <path android:fillColor="#F2B07A" android:pathData="M54,58 m-12,0 a12,12 0,1 1,24 0 a12,12 0,1 1,-24 0" />
+    <path android:fillColor="#1A1423" android:pathData="M54,58 m-8.5,0 a8.5,8.5 0,1 1,17 0 a8.5,8.5 0,1 1,-17 0" />
+    <path android:fillColor="#5B3A7A" android:pathData="M54,58 m-5.5,0 a5.5,5.5 0,1 1,11 0 a5.5,5.5 0,1 1,-11 0" />
+    <path android:fillColor="#FFE6CC" android:pathData="M51,55 m-1.6,0 a1.6,1.6 0,1 1,3.2 0 a1.6,1.6 0,1 1,-3.2 0" />
+    <!-- flash -->
+    <path android:fillColor="#F2B07A" android:pathData="M68,46 L74,46 L74,50 L68,50 Z" />
+</vector>

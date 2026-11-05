@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Case Zero's fallback icon (original art; the build replaces it with one made from
+     the player's own box art when that is available — scripts/make-icons.py). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <gradient android:type="radial" android:gradientRadius="80dp"
+        android:centerX="0.5" android:centerY="0.42"
+        android:startColor="#3A0B0B" android:endColor="#0C0404" />
+</shape>

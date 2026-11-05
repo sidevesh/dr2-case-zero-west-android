@@ -77,3 +77,11 @@ Dead Rising 2: Case Zero and Dead Rising 2: Case West are © Capcom. Nothing of 
 game is in this repository. The recompiled code, the APK built from it, and the
 prepared-assets zip are all **derived from your own copy**: keep them on your own
 devices. This project is not affiliated with or endorsed by Capcom or Microsoft.
+
+## The app icon
+
+No game artwork is stored in this repository. `scripts/make-icons.py` makes each APK's
+launcher icon at build time from the box art inside the builder's own copy of the game,
+so that icon, like the rest of the APK, is for the builder's own devices. The fallback
+icons in `android/app/src/casezero/res` and `android/app/src/casewest/res` are original
+artwork made for this project.

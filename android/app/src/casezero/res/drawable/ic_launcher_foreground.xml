@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A stamped "0" with blood running from it: Case Zero. Original art, no game assets. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <group android:rotation="-12" android:pivotX="54" android:pivotY="52">
+        <!-- the stamp's frame -->
+        <path android:strokeColor="#D32F2F" android:strokeWidth="2.6" android:fillColor="#00000000"
+            android:pathData="M31,33 L77,33 L77,71 L31,71 Z" />
+        <!-- the zero -->
+        <path android:fillColor="#E53935" android:fillType="evenOdd"
+            android:pathData="M54,37 C44,37 40,45 40,52 C40,59 44,67 54,67 C64,67 68,59 68,52 C68,45 64,37 54,37 Z
+                              M54,43 C49,43 47,47.5 47,52 C47,56.5 49,61 54,61 C59,61 61,56.5 61,52 C61,47.5 59,43 54,43 Z" />
+        <!-- the slash through it -->
+        <path android:fillColor="#E53935" android:pathData="M47,61.5 L59.5,41 L62,42.6 L49.5,63 Z" />
+    </group>
+    <!-- drips -->
+    <path android:fillColor="#B71C1C"
+        android:pathData="M44,73 L46,73 L46,82 C46,84 44,84 44,82 Z
+                          M59,70 L61,70 L61,88 C61,90.5 59,90.5 59,88 Z
+                          M68,67 L69.6,67 L69.6,76 C69.6,78 68,78 68,76 Z" />
+</vector>

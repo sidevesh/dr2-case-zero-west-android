@@ -35,6 +35,16 @@ cat > "$SHIP/${PFX,,}_defaults.env" <<EOF
 ${PFX}_VKDRAW=1
 ${PFX}_LAUNCHER=0
 EOF
+# The launcher icon, from YOUR copy of the game's box art (no game art is stored in
+# this repository; without the art, or without Pillow, the APK keeps the fallback icon).
+rm -rf "$GAME_OUT/res-icon"
+for gd in "$WORK/gamedata/$GAME_ID" "$WORK/prepare/$GAME_ID/assets/game"; do
+    if [[ -d "$gd" ]] && python3 -c 'import PIL' 2>/dev/null; then
+        python3 "$SCRIPTS/make-icons.py" "$GAME_ID" "$gd" "$GAME_OUT/res-icon" >/dev/null 2>&1 && {
+            log "launcher icon made from the game's box art"; break; }
+    fi
+done
+[[ -d "$GAME_OUT/res-icon" ]] || log "launcher icon: the fallback (no box art found, or python3-pil missing)"
 # Licences of everything in the APK.
 LIC="$GAME_OUT/apk-assets/licenses"; mkdir -p "$LIC"
 cp "$GAME_SRC/LICENSE" "$LIC/${GAME_ID}-LICENSE.txt"

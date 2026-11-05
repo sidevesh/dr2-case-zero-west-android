@@ -67,10 +67,16 @@ android {
         casezero {
             jniLibs.srcDirs = [new File(outFor('casezero'), 'jniLibs')]
             assets.srcDirs = [new File(outFor('casezero'), 'apk-assets')]
+            // The launcher icon made from the player's own box art (scripts/make-icons.py),
+            // when build-apk.sh could make one; src/casezero/res holds the fallback.
+            res.srcDirs += new File(outFor('casezero'), 'res-icon')
         }
         casewest {
             jniLibs.srcDirs = [new File(outFor('casewest'), 'jniLibs')]
             assets.srcDirs = [new File(outFor('casewest'), 'apk-assets')]
+            // The launcher icon made from the player's own box art (scripts/make-icons.py),
+            // when build-apk.sh could make one; src/casewest/res holds the fallback.
+            res.srcDirs += new File(outFor('casewest'), 'res-icon')
         }
     }
 

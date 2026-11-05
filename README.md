@@ -109,7 +109,7 @@ reuse all of it.
 ```sh
 sudo apt install git curl python3 python3-venv clang cmake ninja-build make pkg-config \
     libvulkan-dev libavcodec-dev libavutil-dev glslang-tools spirv-tools bison flex \
-    openjdk-17-jdk p7zip-full
+    openjdk-17-jdk p7zip-full python3-pil
 ```
 
 **2. Install the Android SDK** command-line tools and, with them, the NDK and platform:
@@ -166,6 +166,9 @@ scripts/prepare-assets.sh casezero <package>  # -> shader zip (--with-game, --sp
   `DR2_KEYSTORE`, `DR2_KEYSTORE_PASSWORD`, `DR2_KEY_ALIAS` and `DR2_KEY_PASSWORD`. Keep
   using the same key: an APK signed with another key cannot update an installed one.
 - **Both games** install side by side as separate apps.
+- **App icon:** made at build time from your copy of the game's box art
+  (`scripts/make-icons.py`, needs `python3-pil`); without it the app gets an original
+  fallback icon per game.
 
 </details>
 
