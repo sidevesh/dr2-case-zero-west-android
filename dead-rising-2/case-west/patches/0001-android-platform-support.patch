@@ -452,8 +452,43 @@ index 66d3fc7..e3f9d4b 100644
  #if defined(__APPLE__)
      // macOS: build the surface from the CAMetalLayer the WINDOW THREAD made (see
      // g_metalLayer). SDL_Vulkan_CreateSurface would create and attach a fresh NSView
+diff --git a/runtime/kernel/imports.cpp b/runtime/kernel/imports.cpp
+index 5a9db53..3eea247 100644
+--- a/runtime/kernel/imports.cpp
++++ b/runtime/kernel/imports.cpp
+@@ -76,6 +76,7 @@
+ #include "../host/log_file.h"  // the exit paths drain the log file's tee (part 105)
+ #include "../host/settings.h"
+ #include "../host/window.h"   // XamInputGetState's device (phase 3)
++#include <ctime>
+ #include "content.h"          // the save-data layer: enumerators and their message
+ #include "guestcall.h"
+ #include "heap.h"
+@@ -5724,8 +5725,22 @@ static uint32_t DispatchAppMessage(uint32_t app, uint32_t message, void* buffer,
+                     g_memory.Translate(arrayVa + i * sizeof(GuestXUserAchievement)));
+                 const uint32_t id = a->achievementId.get();
+                 if (g_achievements.emplace(a->userIndex.get(), id).second)
++                {
+                     KLOG("achievement unlocked: user %u id %u (%zu earned)\n",
+                          a->userIndex.get(), id, g_achievements.size());
++#if defined(__ANDROID__)
++                    // ANDROID: the offline default profile has no libxlive to keep
++                    // them (xlive_glue.cpp), so they would die with the process. One
++                    // "id<TAB>unix-time" line each, beside the settings file, for the
++                    // launcher's ACHIEVEMENTS screen; a repeat in a later run is
++                    // de-duplicated there.
++                    if (FILE* af = fopen((ContentSettingsDir() / "achievements.txt").string().c_str(), "a"))
++                    {
++                        fprintf(af, "%u\t%lld\n", id, (long long)time(nullptr));
++                        fclose(af);
++                    }
++#endif
++                }
+                 // An achievement id is 16 bits on this platform (XACH stores it
+                 // as one, and this title's are 1..12). A wider value is a
+                 // corrupt message, not an achievement, so it is kept in the
 diff --git a/runtime/main.cpp b/runtime/main.cpp
-index 517e3b7..5a3d282 100644
+index 517e3b7..f0f0f9d 100644
 --- a/runtime/main.cpp
 +++ b/runtime/main.cpp
 @@ -37,6 +37,9 @@
@@ -488,3 +523,121 @@ index 517e3b7..5a3d282 100644
  #else
      {
          struct utsname u{};
+@@ -434,6 +452,117 @@ int main(int argc, char** argv)
+         return 0;
+     }
+ 
++#if defined(__ANDROID__)
++    // ANDROID: --dump-spa <out> — write the title's SPA (the XDBF that carries its
++    // achievement list, names, descriptions, gamerscore and icons) for the launcher's
++    // ACHIEVEMENTS screen. Read from the player's own default.xex: the XEX resource
++    // named by the title id; failing that, the first plausible XDBF in the image;
++    // failing that, a *.spa file in the game folder.
++    if (argc > 1 && strcmp(argv[1], "--dump-spa") == 0)
++    {
++        if (argc != 3)
++        {
++            fprintf(stderr, "usage: --dump-spa <out.spa>\n");
++            return 2;
++        }
++        auto save = [&](const uint8_t* p, size_t n, const char* how) {
++            FILE* f = fopen(argv[2], "wb");
++            if (!f || fwrite(p, 1, n, f) != n)
++            {
++                if (f)
++                    fclose(f);
++                fprintf(stderr, "[spa] cannot write %s\n", argv[2]);
++                return 1;
++            }
++            fclose(f);
++            fprintf(stderr, "[spa] %zu bytes (%s) -> %s\n", n, how, argv[2]);
++            return 0;
++        };
++        std::error_code ec;
++        for (const auto& e : std::filesystem::directory_iterator(HostPaths::Game(), ec))
++        {
++            std::string ext = e.path().extension().string();
++            for (auto& ch : ext)
++                ch = char(tolower(ch));
++            if (ext == ".spa" && e.is_regular_file(ec))
++            {
++                auto spa = LoadFile(e.path().string().c_str());
++                if (spa.size() > 24 && memcmp(spa.data(), "XDBF", 4) == 0)
++                    return save(spa.data(), spa.size(), "game folder");
++            }
++        }
++        const std::string xexPath = HostPaths::GameXex().string();
++        auto file = LoadFile(xexPath.c_str());
++        if (file.size() < 24 || memcmp(file.data(), "XEX2", 4) != 0)
++        {
++            fprintf(stderr, "[spa] %s is not an XEX2\n", xexPath.c_str());
++            return 1;
++        }
++        Image image = Image::ParseImage(file.data(), file.size());
++        if (image.size == 0 || !image.data)
++        {
++            fprintf(stderr, "[spa] the XEX did not load\n");
++            return 1;
++        }
++        auto be32 = [](const uint8_t* p) {
++            return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3];
++        };
++        // Optional headers: count at +0x14, then {key, value} pairs from +0x18.
++        // XEX_HEADER_RESOURCE_INFO (0x2FF) points at {size, {name[8], va, size}...};
++        // XEX_HEADER_EXECUTION_INFO (0x40006) at the title id (+0x0C).
++        uint32_t titleId = 0, resOff = 0;
++        const uint32_t nOpt = be32(file.data() + 0x14);
++        for (uint32_t i = 0; i < nOpt && 0x18 + i * 8 + 8 <= file.size(); ++i)
++        {
++            const uint32_t key = be32(file.data() + 0x18 + i * 8);
++            const uint32_t val = be32(file.data() + 0x18 + i * 8 + 4);
++            if (key == 0x2FF)
++                resOff = val;
++            else if (key == 0x40006 && val + 0x10 <= file.size())
++                titleId = be32(file.data() + val + 0x0C);
++        }
++        char want[9];
++        snprintf(want, sizeof want, "%08X", titleId);
++        if (resOff && resOff + 4 <= file.size())
++        {
++            const uint32_t blk = be32(file.data() + resOff);
++            for (uint32_t off = 4; off + 16 <= blk && resOff + off + 16 <= file.size(); off += 16)
++            {
++                const uint8_t* r = file.data() + resOff + off;
++                const uint32_t va = be32(r + 8), sz = be32(r + 12);
++                if (memcmp(r, want, 8) == 0 && va >= image.base &&
++                    uint64_t(va - image.base) + sz <= image.size &&
++                    memcmp(image.data.get() + (va - image.base), "XDBF", 4) == 0)
++                    return save(image.data.get() + (va - image.base), sz, "XEX resource");
++            }
++        }
++        // A scan, for a title that keeps it elsewhere. The XDBF header gives its own
++        // extent: 24 + entries*18 + free*8 + the content the entries point into.
++        for (size_t at = 0; at + 24 <= image.size; at += 4)
++        {
++            const uint8_t* p = image.data.get() + at;
++            if (memcmp(p, "XDBF", 4) != 0)
++                continue;
++            const uint32_t entLen = be32(p + 8), entCnt = be32(p + 12), freeLen = be32(p + 16);
++            if (!entCnt || entCnt > entLen || entLen > 4096 || freeLen > 4096)
++                continue;
++            const size_t content = 24 + size_t(entLen) * 18 + size_t(freeLen) * 8;
++            size_t end = content;
++            for (uint32_t i = 0; i < entCnt && at + 24 + i * 18 + 18 <= image.size; ++i)
++            {
++                const uint8_t* e = p + 24 + i * 18;
++                const size_t entEnd = content + be32(e + 10) + be32(e + 14);
++                if (entEnd > end)
++                    end = entEnd;
++            }
++            if (at + end <= image.size)
++                return save(p, end, "image scan");
++        }
++        fprintf(stderr, "[spa] no SPA found for title %s\n", want);
++        return 1;
++    }
++#endif
++
+     // Release §2.3 step 2: the extract by hand — what the first-run hook below runs
+     // automatically, exposed for the byte-identity gate against the Python reference
+     // (tools/extract_stfs.py) and for unpacking a package deliberately.

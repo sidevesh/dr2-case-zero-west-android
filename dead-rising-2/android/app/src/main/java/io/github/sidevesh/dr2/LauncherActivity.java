@@ -48,7 +48,7 @@ import java.util.concurrent.Executors;
  * every one of these settings when it starts.
  */
 public class LauncherActivity extends Activity {
-    private static final int REQ_PACKAGE = 1, REQ_ASSETS = 2;
+    private static final int REQ_PACKAGE = 1, REQ_ASSETS = 2, REQ_EXPORT_SAVES = 3, REQ_IMPORT_SAVES = 4;
 
     // Palette.
     private static final int BG = 0xFF0D0E11, PANEL = 0xFF16181D, CARD = 0xFF1D2027,
@@ -65,7 +65,7 @@ public class LauncherActivity extends Activity {
     private ProgressBar mProgress;
     private View mImportPackage, mImportAssets, mCheck, mLog;
     private LinearLayout mTabContent;
-    private final TextView[] mTabs = new TextView[3];
+    private final TextView[] mTabs = new TextView[4];
     private int mTab;
 
     @Override
@@ -232,8 +232,8 @@ public class LauncherActivity extends Activity {
         LinearLayout tabs = new LinearLayout(this);
         tabs.setBackground(shape(BG, 12, LINE));
         tabs.setPadding(dp(4), dp(4), dp(4), dp(4));
-        String[] names = { "GRAPHICS", "CONTROLS", "SYSTEM" };
-        for (int i = 0; i < 3; i++) {
+        String[] names = { "PROGRESS", "GRAPHICS", "CONTROLS", "SYSTEM" };
+        for (int i = 0; i < names.length; i++) {
             final int idx = i;
             TextView t = text(names[i], 12, MUTED, true);
             t.setLetterSpacing(0.12f);
@@ -346,15 +346,16 @@ public class LauncherActivity extends Activity {
 
     private void showTab(int idx) {
         mTab = idx;
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < mTabs.length; i++) {
             boolean on = i == idx;
             mTabs[i].setTextColor(on ? Color.WHITE : MUTED);
             mTabs[i].setBackground(on ? shape(ACCENT_DIM, 9, ACCENT) : null);
         }
         mTabContent.removeAllViews();
         switch (idx) {
-            case 0: graphicsTab(); break;
-            case 1: controlsTab(); break;
+            case 0: progressTab(); break;
+            case 1: graphicsTab(); break;
+            case 2: controlsTab(); break;
             default: systemTab(); break;
         }
     }
@@ -467,6 +468,123 @@ public class LauncherActivity extends Activity {
         return String.format(Locale.US, "%.1f", x10 / 10f);
     }
 
+    // ---- PROGRESS: achievements and saves ---------------------------------------------
+
+    private int mProgressGen;
+
+    private void progressTab() {
+        final int gen = ++mProgressGen;
+        section("ACHIEVEMENTS");
+        TextView loading = text("Reading the achievement list from your game…", 12, MUTED, false);
+        loading.setPadding(dp(6), dp(6), 0, 0);
+        mTabContent.addView(loading);
+        final int lang = RuntimeSettings.load(this).getInt("language", 1);
+        // Off the UI thread: the first time, the list is read out of default.xex.
+        // On the worker that runs the native tools: they must not run two at a time.
+        mWorker.execute(() -> {
+            Xdbf spa = mNativeOk && GameEnv.gameUnpacked(this) ? Progress.spa(this) : null;
+            java.util.List<Xdbf.Achievement> list = spa != null ? spa.achievements(lang)
+                                                                : new java.util.ArrayList<>();
+            java.util.Map<Integer, Long> got = Progress.unlocked(this);
+            runOnUiThread(() -> {
+                if (gen != mProgressGen || mTab != 0) return;
+                mTabContent.removeAllViews();
+                fillProgress(spa, list, got);
+            });
+        });
+    }
+
+    private void fillProgress(Xdbf spa, java.util.List<Xdbf.Achievement> list,
+                              java.util.Map<Integer, Long> got) {
+        section("ACHIEVEMENTS");
+        if (list.isEmpty()) {
+            note(GameEnv.gameUnpacked(this)
+                    ? "Could not read the achievement list from the game (" + got.size() + " unlocked so far)."
+                    : "Import the game first: the achievement list is read from your copy of it.");
+        } else {
+            int have = 0, score = 0, total = 0;
+            for (Xdbf.Achievement a : list) {
+                total += a.score;
+                if (got.containsKey(a.id)) { have++; score += a.score; }
+            }
+            LinearLayout sum = settingRow(have + " of " + list.size() + " unlocked",
+                    "Kept on this phone as you play (offline profile). Xenia keeps its own.");
+            TextView g = text(score + " / " + total + " G", 15, ACCENT, true);
+            sum.addView(g);
+            ProgressBar bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+            bar.setMax(Math.max(1, list.size()));
+            bar.setProgress(have);
+            bar.setProgressTintList(ColorStateList.valueOf(ACCENT));
+            mTabContent.addView(bar);
+            java.util.List<Xdbf.Achievement> sorted = new java.util.ArrayList<>(list);
+            sorted.sort((a, b) -> {
+                Long ta = got.get(a.id), tb = got.get(b.id);
+                if ((ta != null) != (tb != null)) return ta != null ? -1 : 1;
+                if (ta != null) return Long.compare(tb, ta);
+                return Integer.compare(a.id, b.id);
+            });
+            java.text.DateFormat df = java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM);
+            for (Xdbf.Achievement a : sorted) {
+                Long when = got.get(a.id);
+                boolean earned = when != null;
+                String title = !earned && a.secret() ? "Secret achievement" : a.name;
+                String desc = earned ? a.unlockedText
+                        : a.secret() ? "Keep playing to find out." : a.lockedText;
+                if (earned && when > 0) desc += "\nUnlocked " + df.format(new java.util.Date(when));
+                LinearLayout r = settingRow(title, desc);
+                byte[] png = earned || !a.secret() ? spa.image(a.imageId) : null;
+                if (png != null) {
+                    android.graphics.Bitmap bm = android.graphics.BitmapFactory.decodeByteArray(png, 0, png.length);
+                    if (bm != null) {
+                        android.widget.ImageView iv = new android.widget.ImageView(this);
+                        iv.setImageBitmap(bm);
+                        if (!earned) {
+                            android.graphics.ColorMatrix cm = new android.graphics.ColorMatrix();
+                            cm.setSaturation(0);
+                            iv.setColorFilter(new android.graphics.ColorMatrixColorFilter(cm));
+                            iv.setAlpha(0.45f);
+                        }
+                        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(44), dp(44));
+                        lp.rightMargin = dp(12);
+                        r.addView(iv, 0, lp);
+                    }
+                }
+                TextView pts = text(a.score + " G", 13, earned ? ACCENT : MUTED, true);
+                pts.setPadding(dp(8), 0, dp(4), 0);
+                r.addView(pts);
+                if (!earned) r.setAlpha(0.7f);
+            }
+        }
+
+        section("SAVES");
+        java.util.List<Progress.Save> saves = Progress.saves(this);
+        if (saves.isEmpty()) note("No saves yet. They appear here once the game saves.");
+        java.text.DateFormat dtf = java.text.DateFormat.getDateTimeInstance(
+                java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT);
+        for (Progress.Save s : saves) {
+            settingRow(s.dir.getName(), Fs.human(s.bytes) + " · " + s.files + (s.files == 1 ? " file" : " files")
+                    + " · " + dtf.format(new java.util.Date(s.modified)));
+        }
+        button("Export saves for Xenia", "A zip laid out like Xenia's content folder, with "
+                + "instructions inside", v -> {
+                    Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                    i.addCategory(Intent.CATEGORY_OPENABLE);
+                    i.setType("application/zip");
+                    i.putExtra(Intent.EXTRA_TITLE, BuildConfig.GAME_ID + "-" + BuildConfig.TITLE_ID + "-saves.zip");
+                    startActivityForResult(i, REQ_EXPORT_SAVES);
+                });
+        button("Import saves from Xenia", "A zip of Xenia's " + BuildConfig.TITLE_ID + " folder (or of an "
+                + "export from here). Saves it replaces are backed up first", v -> {
+                    Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                    i.addCategory(Intent.CATEGORY_OPENABLE);
+                    i.setType("*/*");
+                    startActivityForResult(i, REQ_IMPORT_SAVES);
+                });
+        button("Where saves go in Xenia", null, v -> showText("Saves in Xenia", Progress.xeniaHelp()));
+        note("Saves on this phone: " + Progress.profileDir(this).getAbsolutePath()
+                + "\nBackups of replaced saves: " + Progress.backups(this).getAbsolutePath());
+    }
+
     private void graphicsTab() {
         final RuntimeSettings s = RuntimeSettings.load(this);
 
@@ -480,7 +598,7 @@ public class LauncherActivity extends Activity {
                     if (i >= RuntimeSettings.Options.PRESETS.length) return;
                     RuntimeSettings.Options.applyPreset(this, s, i);
                     s.save();
-                    showTab(0);
+                    showTab(1);
                 });
 
         section("PERFORMANCE");
@@ -506,7 +624,7 @@ public class LauncherActivity extends Activity {
                     int[] r = RuntimeSettings.Options.resolutionFor(this, heights[i]);
                     s.setResolution(r[0], r[1]);
                     s.save();
-                    showTab(0);
+                    showTab(1);
                 });
         SharedPreferences gp = GameEnv.prefs(this);
         boolean fsrOn = gp.getString(GameEnv.PREF_UPSCALER, "fsr").equals("fsr");
@@ -514,7 +632,7 @@ public class LauncherActivity extends Activity {
                 + "keeps edges sharp; bilinear is a plain soft stretch", new String[] { "FSR 1.0", "Bilinear" },
                 fsrOn ? 0 : 1, i -> {
                     gp.edit().putString(GameEnv.PREF_UPSCALER, i == 0 ? "fsr" : "bilinear").apply();
-                    showTab(0);
+                    showTab(1);
                 });
         if (fsrOn) {
             int[] sh = { 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 };
@@ -528,20 +646,20 @@ public class LauncherActivity extends Activity {
                 + "ran this game at 30", fpsNames, nearestExact(fps, s.getInt("fps_cap", 0)), i -> {
                     s.put("fps_cap", fps[i]);
                     s.save();
-                    showTab(0);
+                    showTab(1);
                 });
         toggle("VSync", "On: no wasted frames the screen never shows (saves battery). Off: "
                 + "lowest latency", s.getInt("vsync", 1) != 0, on -> {
                     s.put("vsync", on ? 1 : 0);
                     s.save();
-                    showTab(0);
+                    showTab(1);
                 });
         int[] msaa = RuntimeSettings.Options.MSAA;
         stepper("Anti-aliasing (MSAA)", "Smooths edges at a large cost on a phone GPU",
                 new String[] { "Off", "2×", "4×" }, nearestExact(msaa, s.getInt("msaa", 2)), i -> {
                     s.put("msaa", msaa[i]);
                     s.save();
-                    showTab(0);
+                    showTab(1);
                 });
 
         section("DETAIL");
@@ -549,7 +667,7 @@ public class LauncherActivity extends Activity {
                 Math.max(0, Math.min(2, s.getInt("shadow_tier", 2))), i -> {
                     s.put("shadow_tier", i);
                     s.save();
-                    showTab(0);
+                    showTab(1);
                 });
         int[] crowd = RuntimeSettings.Options.CROWD_X10;
         stepper("Zombie detail", "How many zombies get their full model (1.0 is the Xbox 360's); "
@@ -557,14 +675,14 @@ public class LauncherActivity extends Activity {
                 nearest(crowd, s.getInt("crowd_lod_x10", 20)), i -> {
                     s.put("crowd_lod_x10", crowd[i]);
                     s.save();
-                    showTab(0);
+                    showTab(1);
                 });
         int[] world = RuntimeSettings.Options.WORLD_X10;
         stepper("World detail", "How far away buildings and props switch to their detailed models",
                 labels(world, "", ""), nearest(world, s.getInt("world_lod_x10", 10)), i -> {
                     s.put("world_lod_x10", world[i]);
                     s.save();
-                    showTab(0);
+                    showTab(1);
                 });
 
         section("PICTURE");
@@ -633,7 +751,7 @@ public class LauncherActivity extends Activity {
                         : "This phone has no gyroscope", new String[] { "Off", "While aiming", "Always" },
                 Math.max(0, gm), i -> {
                     p.edit().putString(GameEnv.PREF_GYRO_MODE, gModes[i]).apply();
-                    showTab(1);
+                    showTab(2);
                 });
         if (gm != 0) {
             String[] btns = { "LT", "RT", "LB", "RB" };
@@ -769,6 +887,28 @@ public class LauncherActivity extends Activity {
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
         if (res != RESULT_OK || data == null) return;
+        if (req == REQ_EXPORT_SAVES && data.getData() != null) {
+            Uri dest = data.getData();
+            runBusy(null, ui -> {
+                ui.status("Exporting saves…");
+                int n = Progress.exportXenia(this, dest);
+                runOnUiThread(() -> showText("Saves exported", n + (n == 1 ? " save" : " saves")
+                        + " exported.\n\n" + Progress.xeniaHelp()));
+            });
+            return;
+        }
+        if (req == REQ_IMPORT_SAVES && data.getData() != null) {
+            Uri src = data.getData();
+            runBusy(null, ui -> {
+                ui.status("Importing saves…");
+                int n = Progress.importZip(this, src);
+                runOnUiThread(() -> {
+                    Toast.makeText(this, n + (n == 1 ? " save" : " saves") + " imported", Toast.LENGTH_LONG).show();
+                    if (mTab == 0) showTab(0);
+                });
+            });
+            return;
+        }
         java.util.List<Uri> uris = new java.util.ArrayList<>();
         if (data.getClipData() != null) {
             for (int i = 0; i < data.getClipData().getItemCount(); i++)
