@@ -149,6 +149,10 @@ extern "C" bool Dr2Android_InitVulkan()
         // turnip: the chosen build first, then (DR2_VK_DRIVER2_*) the other bundled
         // build, then the system driver — so one build failing to load on some phone
         // or firmware still leaves a driver that can run the game.
+        // An imported driver package (the launcher's CustomDrivers) loads the same way
+        // but need not be Turnip: it may be a GPU maker's own driver.
+        const char* kind = std::getenv("DR2_VK_DRIVER_KIND");
+        const bool custom = kind && std::strcmp(kind, "custom") == 0;
         if (want && std::strcmp(want, "turnip") == 0)
         {
             struct { const char *dir, *file, *label; } tries[] = {
@@ -165,7 +169,7 @@ extern "C" bool Dr2Android_InitVulkan()
                 const std::string name = label && *label ? label : "bundled Turnip";
                 if (lib)
                 {
-                    g_driverName = "turnip: " + name;
+                    g_driverName = (custom && &t == &tries[0] ? "" : "turnip: ") + name;
                     break;
                 }
                 std::fprintf(stderr, "[android] Turnip (%s) failed: %s\n", name.c_str(), why.c_str());
@@ -180,16 +184,20 @@ extern "C" bool Dr2Android_InitVulkan()
             std::string seen;
             uint32_t devices = 0;
             const bool turnip = tg && IsTurnip(tg, seen, devices);
+            if (tg && custom)
+                std::fprintf(stderr, "[android] imported driver reports: %s (%u device%s)\n",
+                             seen.c_str(), devices, devices == 1 ? "" : "s");
             if (tg && devices == 0)
             {
-                // Turnip loaded but drives no GPU here: an Adreno generation this Mesa
-                // build does not support. The phone's own driver is the only chance.
-                std::fprintf(stderr, "[android] Turnip found no GPU it supports — using the "
-                                     "system driver\n");
-                report += "failed: Turnip does not support this GPU (no device), so the system driver is used\n";
+                // The driver loaded but drives no GPU here (an Adreno generation this
+                // Turnip build does not support, or a package made for another GPU).
+                // The phone's own driver is the only chance.
+                std::fprintf(stderr, "[android] the loaded driver found no GPU it supports — "
+                                     "using the system driver\n");
+                report += "failed: " + g_driverName + " does not support this GPU (no device), so the system driver is used\n";
                 lib = nullptr;
             }
-            else if (tg && !turnip)
+            else if (tg && !turnip && !(custom && g_driverName.rfind("turnip: ", 0) != 0))
             {
                 std::fprintf(stderr, "[android] Turnip was requested but the driver reports '%s': "
                                      "the stock driver was already loaded in this process, so "

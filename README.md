@@ -55,24 +55,26 @@ report). The renderer needs Vulkan 1.3 with, among others, BC texture compressio
 | **Adreno 8xx** (Snapdragon 8 Elite) | likely | Turnip support for these GPUs is newer; the app falls back to the phone's own driver if Turnip cannot drive the GPU. |
 | **Adreno 6xx** (Snapdragon 865 / 888 …) | possible | Turnip supports it; performance unknown, use the Battery saver preset. |
 | **Xclipse** (Samsung Exynos 2200 / 2400) | possible | Runs on the phone's own driver if it has every required feature. |
-| **Mali** (most MediaTek, Google Tensor, older Exynos), **PowerVR** | ✗ not yet | No BC texture support; the game's textures would need a converter that does not exist yet. |
+| **Mali** (most MediaTek, Google Tensor, older Exynos), **PowerVR** | ✗ not yet | No BC texture support; the game's textures would need a converter that does not exist yet. You can still try a driver package (below). |
 
 Also needed: **Android 13 or newer**, 64-bit ARM, and ideally **8 GB of RAM** or more.
 
 ## Features
 
 - **Runs natively**, with the game's own code recompiled for ARM64; no emulation layer.
-- **A launcher made for phones**, in four tabs:
+- **A launcher made for phones**, dressed in each game's own artwork (its background
+  scene and logo, read from your imported game files), in four tabs:
   - **Progress**: your achievements (icons, descriptions, gamerscore, unlock dates) and
     save games.
   - **Graphics**: presets (Battery saver / Balanced / Quality), internal resolution from
-    540p (experimental) to 1440p at your screen's shape, **FSR 1.0** upscaling with a
-    sharpness control, frame-rate cap (30 / 60 / 90 / 120 / unlocked), vsync, MSAA,
+    540p (experimental) to 1440p at your screen's shape, **FSR 1.0** upscaling (on/off,
+    with a sharpness control), frame-rate cap (30 / 60 / 90 / 120 / unlocked), vsync, MSAA,
     shadows, zombie and world detail, field of view, exposure, FPS counter. These are the
     game's own settings, shared with its in-game PC settings screen.
   - **Controls**: on-screen controller opacity, size and haptics; **gyro aiming** (off /
     while aiming / always, with sensitivity and per-axis invert).
-  - **System**: GPU driver choice, Turnip rendering mode, sustained performance mode,
+  - **System**: GPU driver choice, **your own GPU driver packages**, Turnip rendering
+    mode, sustained performance mode,
     skip intro logos, language, device check, logs.
 - **Controllers**: any Bluetooth or USB controller works as an Xbox pad. Without one, a
   translucent on-screen controller appears.
@@ -216,6 +218,16 @@ Two things to know:
 **Import saves from Xenia** brings saves the other way. Any save it replaces is backed
 up first.
 
+### Your own GPU driver
+
+**System › Import a driver package** takes a driver zip in the format Android
+emulators use (libadrenotools': a `meta.json` naming the driver library, beside it), so
+you can try a newer Turnip build or your GPU maker's driver. It then appears in
+**System › GPU driver**, and the main screen re-checks the phone with it. If it fails
+to load or finds no GPU, the app falls back to the bundled Turnip (on Adreno) and then
+to the phone's own driver; **System** shows why. A driver cannot add what the GPU itself
+lacks: on Mali, BC texture support is a hardware question, not a driver one.
+
 ## Troubleshooting
 
 | What you see | What to do |
@@ -223,7 +235,7 @@ up first.
 | "This phone cannot run it" on the main screen | It names what is missing. On Adreno, make sure **System › GPU driver** is *Auto* or a Turnip build. |
 | "Adreno … lacks required Vulkan feature: shaderInt64" when starting | The stock driver was used. Check **System › GPU driver**; the System tab shows why Turnip did not load last time. |
 | Black screen or broken graphics | Try the other Turnip build in **System › GPU driver**, or **Turnip rendering: Tiled**. Send the **Last game log**. |
-| Slow | Lower the preset or resolution; turn on **Sustained performance**; keep FSR on. |
+| Slow | Lower the preset or resolution; turn on **Sustained performance**. FSR costs a little; turning it off is a small saving. |
 | Portrait or rotated picture | Update to the latest build; the game always runs in landscape. |
 
 When reporting a problem, include your phone model, **System › Check this device**

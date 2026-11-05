@@ -86,6 +86,15 @@ decisions, and why:
   is not hardware-accelerated and the game loads its driver before it draws anything.
   After loading, the driver is asked whether it really is Turnip, and the launcher shows
   what the last run used.
+- **Your own drivers.** `CustomDrivers.java` imports driver zips in libadrenotools'
+  package format (`meta.json` with `libraryName`, the library beside it), checks the
+  library is AArch64, and unpacks it into private storage. It loads exactly like the
+  bundled Turnip; the "is it really Turnip?" check is skipped for it, since a package may
+  be a GPU maker's driver, but the no-device fallback still applies.
+- **The launcher's look** comes from the game's dashboard artwork in the imported package
+  (`X_IMAGEID_GAME_BKGND.PNG`, the box art's logo), baked once at the window's size
+  (`GameArt.java`): the UI draws in software, so a pre-scaled, pre-darkened bitmap keeps
+  scrolling smooth.
 - **Will this phone run it?** The launcher runs the runtime's own `--diag` once per APK
   and driver choice and shows the verdict on its main screen, with advice when a required
   feature is missing (`Compat.java`).

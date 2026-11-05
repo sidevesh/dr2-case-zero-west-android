@@ -48,12 +48,18 @@ import java.util.concurrent.Executors;
  * every one of these settings when it starts.
  */
 public class LauncherActivity extends Activity {
-    private static final int REQ_PACKAGE = 1, REQ_ASSETS = 2, REQ_EXPORT_SAVES = 3, REQ_IMPORT_SAVES = 4;
+    private static final int REQ_PACKAGE = 1, REQ_ASSETS = 2, REQ_EXPORT_SAVES = 3, REQ_IMPORT_SAVES = 4,
+            REQ_IMPORT_DRIVER = 5;
 
     // Palette.
-    private static final int BG = 0xFF0D0E11, PANEL = 0xFF16181D, CARD = 0xFF1D2027,
-            LINE = 0xFF2A2E37, TEXT = 0xFFF1F2F4, MUTED = 0xFF9AA0AA, ACCENT = 0xFFE4492F,
-            ACCENT_DIM = 0xFF5A2219, OK = 0xFF6CCB7A, WARN = 0xFFF2B84B, BAD = 0xFFEF5350;
+    // Panels are translucent so the game's own background art (GameArt) shows through.
+    private static final int BG = 0xFF0D0E11, PANEL = 0xD914161B, SHEET = 0x7314161B, CARD = 0xCC1D2027,
+            LINE = 0x33FFFFFF, TEXT = 0xFFF1F2F4, MUTED = 0xFFA4AAB4,
+            OK = 0xFF6CCB7A, WARN = 0xFFF2B84B, BAD = 0xFFEF5350;
+    // Each game's colour: Case Zero's blood red, Case West's dusk orange.
+    private static final boolean WEST = "casewest".equals(BuildConfig.GAME_ID);
+    private static final int ACCENT = WEST ? 0xFFF0883E : 0xFFE4492F,
+            ACCENT_DIM = WEST ? 0xCC5C3418 : 0xCC5A2219;
 
     private final ExecutorService mWorker = Executors.newSingleThreadExecutor();
     private boolean mBusy;
@@ -61,6 +67,9 @@ public class LauncherActivity extends Activity {
     private String mNativeError;
 
     private LinearLayout mStatus;
+    private android.widget.ImageView mBgView, mLogoView;
+    private View mTextTitle;
+    private boolean mArtLoaded;
     private TextView mDriverLine, mProgressText, mPlay;
     private ProgressBar mProgress;
     private View mImportPackage, mImportAssets, mCheck, mLog;
@@ -88,6 +97,7 @@ public class LauncherActivity extends Activity {
         super.onResume();
         refresh();
         showTab(mTab);   // the in-game panel may have changed the settings file
+        loadArt();       // the game may have just been imported
         // An APK built with --bundle carries the game itself: install it the first
         // time (and after an update that changed it), with nothing for the player to pick.
         if (!mBusy && Importer.bundlePending(this)) {
@@ -173,16 +183,28 @@ public class LauncherActivity extends Activity {
         leftScroll.addView(left);
         root.addView(leftScroll, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 4f));
 
+        // The game's own logo, once the game is imported (GameArt); until then, text.
+        mLogoView = new android.widget.ImageView(this);
+        mLogoView.setAdjustViewBounds(true);
+        mLogoView.setMaxHeight(dp(110));
+        mLogoView.setScaleType(android.widget.ImageView.ScaleType.FIT_START);
+        mLogoView.setVisibility(View.GONE);
+        left.addView(mLogoView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout textTitle = new LinearLayout(this);
+        textTitle.setOrientation(LinearLayout.VERTICAL);
+        mTextTitle = textTitle;
+        left.addView(textTitle);
         TextView kicker = text("DEAD RISING 2", 12, ACCENT, true);
         kicker.setLetterSpacing(0.25f);
-        left.addView(kicker);
+        textTitle.addView(kicker);
         String sub = BuildConfig.GAME_TITLE.contains(":")
                 ? BuildConfig.GAME_TITLE.substring(BuildConfig.GAME_TITLE.indexOf(':') + 1).trim()
                 : BuildConfig.GAME_TITLE;
         TextView title = text(sub.toUpperCase(Locale.ROOT), 30, TEXT, true);
         title.setTypeface(Typeface.create("sans-serif-black", Typeface.NORMAL));
         title.setLetterSpacing(0.02f);
-        left.addView(title);
+        textTitle.addView(title);
         TextView tag = text("Native ARM64 recompilation · unofficial · your own copy of the game", 12, MUTED, false);
         tag.setPadding(0, dp(2), 0, dp(12));
         left.addView(tag);
@@ -236,7 +258,8 @@ public class LauncherActivity extends Activity {
         // RIGHT: settings.
         LinearLayout right = new LinearLayout(this);
         right.setOrientation(LinearLayout.VERTICAL);
-        right.setBackground(shape(PANEL, 18, LINE));
+        // See-through, so the scene shows; each setting row carries its own backing.
+        right.setBackground(shape(SHEET, 18, LINE));
         right.setPadding(dp(14), dp(12), dp(14), dp(4));
         root.addView(right, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 6f));
 
@@ -263,7 +286,45 @@ public class LauncherActivity extends Activity {
         sc.addView(mTabContent);
         right.addView(sc, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        setContentView(root);
+        // The art layer under everything; the content draws over it.
+        FrameLayout frame = new FrameLayout(this);
+        frame.setBackgroundColor(BG);
+        mBgView = new android.widget.ImageView(this);
+        mBgView.setScaleType(android.widget.ImageView.ScaleType.FIT_XY);
+        frame.addView(mBgView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        root.setBackgroundColor(Color.TRANSPARENT);
+        frame.addView(root, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        frame.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
+            if (r - l != or - ol || b - t != ob - ot) { mArtLoaded = false; loadArt(); }
+        });
+        setContentView(frame);
+    }
+
+    /** The game's background and logo, once it is imported (GameArt), off the UI thread. */
+    private void loadArt() {
+        if (mArtLoaded || mBgView == null || !GameArt.available(this)) return;
+        final int w = mBgView.getWidth(), h = mBgView.getHeight();
+        if (w <= 0 || h <= 0) return;
+        mArtLoaded = true;
+        new Thread(() -> {
+            android.graphics.Bitmap bg = null, logo = null;
+            try {
+                bg = GameArt.background(this, w, h);
+                logo = GameArt.logo(this);
+            } catch (Throwable ignored) {
+            }
+            final android.graphics.Bitmap fb = bg, fl = logo;
+            runOnUiThread(() -> {
+                if (fb != null) mBgView.setImageBitmap(fb);
+                if (fl != null) {
+                    mLogoView.setImageBitmap(fl);
+                    mLogoView.setVisibility(View.VISIBLE);
+                    mTextTitle.setVisibility(View.GONE);
+                }
+            });
+        }, "dr2-art").start();
     }
 
     private void addPair(LinearLayout row, View a, View b) {
@@ -325,7 +386,7 @@ public class LauncherActivity extends Activity {
         // The driver: what is chosen, and what the last run really loaded.
         String pref = GameEnv.driverPref(this), eff = GameEnv.driver(this);
         StringBuilder d = new StringBuilder("GPU driver: ").append(pref.equals("auto")
-                ? GameEnv.label(eff) + " (auto)" : GameEnv.label(pref));
+                ? GameEnv.label(eff) + " (auto)" : GameEnv.label(this, pref));
         String rep = GameEnv.lastDriverReport(this);
         int color = MUTED;
         if (rep != null) {
@@ -653,8 +714,10 @@ public class LauncherActivity extends Activity {
                 });
         SharedPreferences gp = GameEnv.prefs(this);
         boolean fsrOn = gp.getString(GameEnv.PREF_UPSCALER, "fsr").equals("fsr");
-        stepper("Upscaler", "How the frame is enlarged to the screen. FSR 1.0 (AMD FidelityFX) "
-                + "keeps edges sharp; bilinear is a plain soft stretch", new String[] { "FSR 1.0", "Bilinear" },
+        stepper("FSR upscaling", "The game renders at the internal resolution above and is "
+                + "enlarged to fill the screen. On: AMD FidelityFX FSR 1.0 keeps edges sharp. Off: "
+                + "the plain stretch the PC version uses (softer, a little cheaper)",
+                new String[] { "On", "Off" },
                 fsrOn ? 0 : 1, i -> {
                     gp.edit().putString(GameEnv.PREF_UPSCALER, i == 0 ? "fsr" : "bilinear").apply();
                     showTab(1);
@@ -815,10 +878,22 @@ public class LauncherActivity extends Activity {
         section("GPU");
         String pref = GameEnv.driverPref(this);
         button("GPU driver: " + (pref.equals("auto")
-                        ? "Auto (" + GameEnv.label(GameEnv.driver(this)) + ")" : GameEnv.label(pref)),
-                "Adreno needs a bundled Turnip build: the stock driver lacks a feature this renderer "
-                        + "requires. If one build fails to load, the other is tried automatically",
+                        ? "Auto (" + GameEnv.label(GameEnv.driver(this)) + ")" : GameEnv.label(this, pref)),
+                "On Adreno, a Turnip build is needed: the stock driver lacks a feature this "
+                        + "renderer requires. If the chosen driver fails to load, the bundled Turnip "
+                        + "and then the phone's own driver are tried",
                 v -> chooseDriver());
+        button("Import a driver package", "A driver zip in the format Android emulators use (a "
+                + "meta.json beside the driver). Lets you try newer Turnip builds or your GPU "
+                + "maker's drivers; it does not add features a GPU lacks",
+                v -> {
+                    Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                    i.addCategory(Intent.CATEGORY_OPENABLE);
+                    i.setType("*/*");
+                    startActivityForResult(i, REQ_IMPORT_DRIVER);
+                });
+        if (!CustomDrivers.list(this).isEmpty())
+            button("Remove a custom driver", null, v -> removeDriver());
         String rep = GameEnv.lastDriverReport(this);
         if (rep != null && rep.contains("failed: ")) note("Last driver load:\n" + rep);
         stepper("Turnip rendering", "Direct is usually faster for this renderer; Tiled can save "
@@ -873,21 +948,54 @@ public class LauncherActivity extends Activity {
      * driver just chosen.
      */
     private void chooseDriver() {
-        String[] keys = { "auto", "mesa", "r6", "system" };
-        String[] names = {
+        java.util.List<String> keys = new java.util.ArrayList<>(java.util.Arrays.asList("auto", "mesa", "r6", "system"));
+        java.util.List<String> names = new java.util.ArrayList<>(java.util.Arrays.asList(
                 "Auto (" + GameEnv.label(GameEnv.adreno() ? "mesa" : "system") + ")",
-                GameEnv.label("mesa"), GameEnv.label("r6"), "System driver" };
-        int cur = java.util.Arrays.asList(keys).indexOf(GameEnv.driverPref(this));
+                GameEnv.label("mesa"), GameEnv.label("r6"), "System driver"));
+        for (CustomDrivers.Driver d : CustomDrivers.list(this)) {
+            keys.add(CustomDrivers.PREFIX + d.id);
+            names.add("Custom: " + d.label());
+        }
+        int cur = keys.indexOf(GameEnv.driverPref(this));
         new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
                 .setTitle("GPU driver")
-                .setSingleChoiceItems(names, cur, (d, which) -> {
+                .setSingleChoiceItems(names.toArray(new String[0]), cur, (d, which) -> {
                     d.dismiss();
-                    if (which == cur) return;
-                    GameEnv.prefs(this).edit().putString(GameEnv.PREF_DRIVER, keys[which]).commit();
-                    Intent i = new Intent(this, LauncherActivity.class)
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-                    startActivity(i);
-                    Runtime.getRuntime().exit(0);
+                    if (which != cur) selectDriver(keys.get(which));
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    /**
+     * The choice reaches the native side through the environment, read once per
+     * process: the launcher's own process is restarted so CHECK THIS DEVICE (and the
+     * automatic check) use the driver just chosen.
+     */
+    private void selectDriver(String key) {
+        GameEnv.prefs(this).edit().putString(GameEnv.PREF_DRIVER, key).commit();
+        Intent i = new Intent(this, LauncherActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        startActivity(i);
+        Runtime.getRuntime().exit(0);
+    }
+
+    private void removeDriver() {
+        java.util.List<CustomDrivers.Driver> list = CustomDrivers.list(this);
+        if (list.isEmpty()) {
+            Toast.makeText(this, "No custom drivers imported", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String[] names = new String[list.size()];
+        for (int i = 0; i < names.length; i++) names[i] = list.get(i).label();
+        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Remove a custom driver")
+                .setItems(names, (d, which) -> {
+                    CustomDrivers.Driver drv = list.get(which);
+                    boolean inUse = GameEnv.driverPref(this).equals(CustomDrivers.PREFIX + drv.id);
+                    CustomDrivers.remove(this, drv.id);
+                    if (inUse) selectDriver("auto");
+                    else showTab(mTab);
                 })
                 .setNegativeButton("Cancel", null)
                 .show();
@@ -920,6 +1028,22 @@ public class LauncherActivity extends Activity {
                 runOnUiThread(() -> showText("Exported to Xenia", r.saves + (r.saves == 1 ? " save" : " saves")
                         + " and " + r.unlocked + " of " + r.achievements + " achievements exported.\n\n"
                         + XeniaExport.instructions()));
+            });
+            return;
+        }
+        if (req == REQ_IMPORT_DRIVER && data.getData() != null) {
+            Uri src = data.getData();
+            runBusy(null, ui -> {
+                ui.status("Importing the driver package…");
+                CustomDrivers.Driver d = CustomDrivers.importZip(this, src);
+                runOnUiThread(() -> new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                        .setTitle("Driver imported")
+                        .setMessage(d.label() + (d.vendor.isEmpty() ? "" : "\nVendor: " + d.vendor)
+                                + (d.description.isEmpty() ? "" : "\n\n" + d.description)
+                                + "\n\nUse it now? The launcher restarts, then checks this phone with it.")
+                        .setPositiveButton("Use it", (dd, w) -> selectDriver(CustomDrivers.PREFIX + d.id))
+                        .setNegativeButton("Later", (dd, w) -> showTab(mTab))
+                        .show());
             });
             return;
         }
@@ -1044,6 +1168,7 @@ public class LauncherActivity extends Activity {
                 mProgress.setVisibility(View.GONE);
                 mProgressText.setVisibility(View.GONE);
                 refresh();
+                loadArt();   // an import may have just brought the game's artwork
                 if (err != null) showText("That did not work", err);
                 else if (doneMessage != null) Toast.makeText(this, doneMessage, Toast.LENGTH_LONG).show();
             });

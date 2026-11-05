@@ -95,7 +95,10 @@ public final class GameEnv {
         if (dxc.isFile()) set(p + "_DXC_LIB", dxc.getAbsolutePath());
         String drv = driver(c);
         sPrepareError = null;
-        File turnipDir = drv.equals("system") ? null : prepareTurnip(c, drv);
+        CustomDrivers.Driver custom = drv.startsWith(CustomDrivers.PREFIX)
+                ? CustomDrivers.get(c, drv.substring(CustomDrivers.PREFIX.length())) : null;
+        File turnipDir = drv.equals("system") ? null
+                : custom != null ? custom.dir : prepareTurnip(c, drv);
         set("DR2_VK_RESULT_FILE", driverResult(c).getAbsolutePath());
         // Why this driver: printed by --diag and the game log (android_main.cpp), so a
         // pasted device check says which step chose it.
@@ -104,15 +107,20 @@ public final class GameEnv {
                 + (drv.equals("system") ? "" : turnipDir != null ? ", copied to " + turnipDir
                         : ", COPY FAILED: " + sPrepareError));
         if (turnipDir != null) {
+            // "turnip" = load through libadrenotools: a bundled Turnip build, or a driver
+            // package the player imported (CustomDrivers), which need not be Turnip.
             set("DR2_VK_DRIVER", "turnip");
+            set("DR2_VK_DRIVER_KIND", custom != null ? "custom" : "bundled");
             set("DR2_VK_DRIVER_DIR", turnipDir.getAbsolutePath());
-            set("DR2_VK_DRIVER_FILE", "libvulkan_freedreno.so");
-            set("DR2_VK_DRIVER_LABEL", label(drv));
+            set("DR2_VK_DRIVER_FILE", custom != null ? custom.library : "libvulkan_freedreno.so");
+            set("DR2_VK_DRIVER_LABEL", label(c, drv));
             // The other bundled build, tried when this one does not load (a build that
             // works on one firmware can fail to load on another), before the system
-            // driver — which on Adreno 7xx cannot run the renderer at all.
-            String other = drv.equals("r6") ? "mesa" : "r6";
-            File otherDir = prepareTurnip(c, other);
+            // driver — which on Adreno 7xx cannot run the renderer at all. A custom
+            // package falls back to Mesa's Turnip on Adreno, and to the system driver
+            // anywhere else.
+            String other = custom != null ? (adreno() ? "mesa" : null) : drv.equals("r6") ? "mesa" : "r6";
+            File otherDir = other == null ? null : prepareTurnip(c, other);
             if (otherDir != null) {
                 set("DR2_VK_DRIVER2_DIR", otherDir.getAbsolutePath());
                 set("DR2_VK_DRIVER2_FILE", "libvulkan_freedreno.so");
@@ -206,6 +214,9 @@ public final class GameEnv {
      */
     static String driver(Context c) {
         String p = driverPref(c);
+        if (p.startsWith(CustomDrivers.PREFIX)
+                && CustomDrivers.get(c, p.substring(CustomDrivers.PREFIX.length())) == null)
+            p = "auto";   // the imported package was removed
         if (p.equals("auto")) return adreno() ? "mesa" : "system";
         return p;
     }
@@ -214,6 +225,15 @@ public final class GameEnv {
     static String lastDriverReport(Context c) {
         String s = Fs.readSmall(driverResult(c));
         return s == null ? null : s.trim();
+    }
+
+    /** Also names imported driver packages ("custom:<id>"). */
+    static String label(Context c, String build) {
+        if (build.startsWith(CustomDrivers.PREFIX)) {
+            CustomDrivers.Driver d = CustomDrivers.get(c, build.substring(CustomDrivers.PREFIX.length()));
+            return d != null ? "Custom: " + d.label() : "Custom driver (removed)";
+        }
+        return label(build);
     }
 
     static String label(String build) {

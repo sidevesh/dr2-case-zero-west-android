@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.0
+
+- The launcher wears each game's own artwork: its background scene and logo, read from
+  the imported game files, with the colours of the game (Case Zero red, Case West dusk
+  orange). Before a game is imported it keeps the plain look.
+- FSR is now an explicit On / Off switch (Off is the plain stretch the PC version uses).
+- Import your own GPU driver packages (the adrenotools zip format Android emulators use),
+  choose them in System › GPU driver, remove them again; automatic fallback if one does
+  not load or finds no GPU.
+- App icons made from each game's box art at build time (original fallback icons when
+  the art is not available).
+
 ## 1.0.0 — first release
 
 Dead Rising 2: Case Zero and Case West as native Android (ARM64) apps, built from your
