@@ -19,7 +19,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
-import java.util.zip.ZipOutputStream;
 
 /**
  * The player's progress: save games and achievements.
@@ -28,7 +27,7 @@ import java.util.zip.ZipOutputStream;
  * a folder (kernel/content.cpp), named by the save's XCONTENT file name, under
  * saves/&lt;game&gt;/default/ for the offline default profile. Xenia keeps a title's saves
  * the same way — one folder per save under content/.../&lt;TitleID&gt;/00000001/ — so the
- * export is that tree, zipped, and the import accepts one.
+ * import accepts that tree, zipped (XeniaExport writes it, with Xenia's headers).
  *
  * ACHIEVEMENTS: the runtime appends "id&lt;TAB&gt;unix-time" to achievements.txt as the game
  * unlocks them (the patched kernel/imports.cpp); their names, descriptions, gamerscore
@@ -72,35 +71,6 @@ final class Progress {
             out.add(s);
         }
         return out;
-    }
-
-    /**
-     * A zip laid out like Xenia's content folder:
-     *   &lt;TitleID&gt;/00000001/&lt;save&gt;/&lt;files&gt;   plus a README.txt saying where it goes.
-     */
-    static int exportXenia(Context c, Uri dest) throws Exception {
-        List<Save> list = saves(c);
-        if (list.isEmpty()) throw new Importer.Failure("There are no saves to export yet.");
-        String tid = BuildConfig.TITLE_ID;
-        try (OutputStream raw = c.getContentResolver().openOutputStream(dest);
-             ZipOutputStream z = new ZipOutputStream(raw)) {
-            if (raw == null) throw new IOException("cannot open " + dest);
-            z.putNextEntry(new ZipEntry("README.txt"));
-            z.write(xeniaHelp().getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            z.closeEntry();
-            for (Save s : list) {
-                File[] fs = s.dir.listFiles(File::isFile);
-                if (fs == null) continue;
-                for (File f : fs) {
-                    ZipEntry e = new ZipEntry(tid + "/00000001/" + s.dir.getName() + "/" + f.getName());
-                    e.setTime(f.lastModified());
-                    z.putNextEntry(e);
-                    try (InputStream in = new FileInputStream(f)) { Fs.copy(in, z, null); }
-                    z.closeEntry();
-                }
-            }
-        }
-        return list.size();
     }
 
     /**
@@ -173,22 +143,6 @@ final class Progress {
         } else {
             Files.copy(src.toPath(), dst.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
         }
-    }
-
-    static String xeniaHelp() {
-        String t = BuildConfig.TITLE_ID;
-        return "Saves for " + BuildConfig.GAME_TITLE + " (title ID " + t + "), in Xenia's layout.\n\n"
-                + "Copy the " + t + " folder from this zip into Xenia's content folder:\n\n"
-                + "  Xenia Canary (with profiles):\n"
-                + "    <xenia folder>/content/<your profile's XUID>/" + t + "/00000001/<save>\n"
-                + "    The XUID is the 16-character folder already in content/ (it starts with E0),\n"
-                + "    created when you made a profile. Start the game in Xenia once first.\n\n"
-                + "  Xenia (older builds, no profiles):\n"
-                + "    <xenia folder>/content/" + t + "/00000001/<save>\n\n"
-                + "Going the other way, zip the " + t + " folder from Xenia and use\n"
-                + "IMPORT FROM XENIA in the Android launcher.\n\n"
-                + "The save files are the game's own, byte for byte. Whether the game accepts a save\n"
-                + "made under a different profile is up to the game; back up before you overwrite.\n";
     }
 
     // ---- achievements ------------------------------------------------------------------

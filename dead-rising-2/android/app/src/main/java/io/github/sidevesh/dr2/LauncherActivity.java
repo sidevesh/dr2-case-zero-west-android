@@ -565,14 +565,18 @@ public class LauncherActivity extends Activity {
             settingRow(s.dir.getName(), Fs.human(s.bytes) + " · " + s.files + (s.files == 1 ? " file" : " files")
                     + " · " + dtf.format(new java.util.Date(s.modified)));
         }
-        button("Export saves for Xenia", "A zip laid out like Xenia's content folder, with "
-                + "instructions inside", v -> {
+        section("XENIA");
+        button("Export to Xenia", "Your saves (with the header files Xenia needs, plus a zip for "
+                + "Xenia Manager's Import Saves) and your achievements as " + BuildConfig.TITLE_ID
+                + ".gpd, in one zip with instructions", v -> {
                     Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
                     i.addCategory(Intent.CATEGORY_OPENABLE);
                     i.setType("application/zip");
-                    i.putExtra(Intent.EXTRA_TITLE, BuildConfig.GAME_ID + "-" + BuildConfig.TITLE_ID + "-saves.zip");
+                    i.putExtra(Intent.EXTRA_TITLE, BuildConfig.GAME_ID + "-" + BuildConfig.TITLE_ID + "-xenia.zip");
                     startActivityForResult(i, REQ_EXPORT_SAVES);
                 });
+        button("How to use it in Xenia", "Where each file goes, with and without Xenia Manager",
+                v -> showText("Export to Xenia", XeniaExport.instructions()));
         button("Import saves from Xenia", "A zip of Xenia's " + BuildConfig.TITLE_ID + " folder (or of an "
                 + "export from here). Saves it replaces are backed up first", v -> {
                     Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
@@ -580,7 +584,6 @@ public class LauncherActivity extends Activity {
                     i.setType("*/*");
                     startActivityForResult(i, REQ_IMPORT_SAVES);
                 });
-        button("Where saves go in Xenia", null, v -> showText("Saves in Xenia", Progress.xeniaHelp()));
         note("Saves on this phone: " + Progress.profileDir(this).getAbsolutePath()
                 + "\nBackups of replaced saves: " + Progress.backups(this).getAbsolutePath());
     }
@@ -890,10 +893,11 @@ public class LauncherActivity extends Activity {
         if (req == REQ_EXPORT_SAVES && data.getData() != null) {
             Uri dest = data.getData();
             runBusy(null, ui -> {
-                ui.status("Exporting saves…");
-                int n = Progress.exportXenia(this, dest);
-                runOnUiThread(() -> showText("Saves exported", n + (n == 1 ? " save" : " saves")
-                        + " exported.\n\n" + Progress.xeniaHelp()));
+                ui.status("Exporting to Xenia…");
+                XeniaExport.Result r = XeniaExport.export(this, dest);
+                runOnUiThread(() -> showText("Exported to Xenia", r.saves + (r.saves == 1 ? " save" : " saves")
+                        + " and " + r.unlocked + " of " + r.achievements + " achievements exported.\n\n"
+                        + XeniaExport.instructions()));
             });
             return;
         }
