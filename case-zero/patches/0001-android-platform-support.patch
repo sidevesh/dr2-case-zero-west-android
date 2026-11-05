@@ -1,0 +1,643 @@
+diff --git a/runtime/CMakeLists.txt b/runtime/CMakeLists.txt
+index 05f4622..c3f109a 100644
+--- a/runtime/CMakeLists.txt
++++ b/runtime/CMakeLists.txt
+@@ -13,7 +13,9 @@ cmake_minimum_required(VERSION 3.20)
+ #
+ # Override deliberately if you ever want to try otherwise:
+ #   cmake -DCMAKE_CXX_COMPILER=g++ ...
+-if(NOT DEFINED CMAKE_CXX_COMPILER)
++# Android: a toolchain file (the NDK's) picks the compiler — which is Clang — and a
++# host clang++ chosen here would be overridden by it anyway.
++if(NOT DEFINED CMAKE_CXX_COMPILER AND NOT CMAKE_TOOLCHAIN_FILE)
+     find_program(CZ_CLANGXX clang++)
+     if(NOT CZ_CLANGXX)
+         message(FATAL_ERROR
+@@ -342,7 +344,18 @@ execute_process(COMMAND ${CMAKE_COMMAND} -E copy_if_different
+ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+     "${XENOS_ROOT}/XenosRecomp/shader_common.h")
+ 
+-add_executable(cz_runtime
++# ANDROID: the runtime is a shared library, libmain.so, which SDL's Java activity
++# loads and enters through SDL_main (android_main.cpp, below). Everywhere else it is
++# the executable. Same sources, same target name, so every later line applies to both.
++function(cz_runtime_target name)
++    if(ANDROID)
++        add_library(${name} SHARED ${ARGN})
++    else()
++        add_executable(${name} ${ARGN})
++    endif()
++endfunction()
++
++cz_runtime_target(cz_runtime
+     main.cpp
+     cpu/timebase.cpp
+     cpu/guest_thread.cpp
+@@ -800,3 +813,22 @@ if(GIT_FOUND)
+ endif()
+ message(STATUS "Game version for bug reports: ${CZ_GAME_VERSION}")
+ set_source_files_properties(host/bug_report.cpp PROPERTIES COMPILE_DEFINITIONS "CZ_GAME_VERSION=\"${CZ_GAME_VERSION}\"")
++
++# ---- ANDROID (the Android port) -------------------------------------------------------
++# The runtime as libmain.so for SDL's Android activity. Everything Android-specific
++# that is not a one-line platform branch lives in CZ_ANDROID_DIR (that project's
++# native), shared by both Dead Rising 2 ports: the build fragment
++# (android.cmake), the SDL_main/JNI entry points and logcat bridge, the Vulkan driver
++# choice (system or the bundled Turnip, through volk), the surface-lifecycle seam the
++# renderer calls, and the few glibc spellings bionic lacks.
++if(ANDROID)
++    set(CZ_ANDROID_DIR "" CACHE PATH "this Android port's native/ directory")
++    if(NOT EXISTS "${CZ_ANDROID_DIR}/android.cmake")
++        message(FATAL_ERROR "Android build: set CZ_ANDROID_DIR to the Android port's "
++                            "native (got '${CZ_ANDROID_DIR}')")
++    endif()
++    set(DR2_RUNTIME_TARGET cz_runtime)
++    set(DR2_LOG_TAG CaseZero)
++    set(DR2_ANDROID_DIR "${CZ_ANDROID_DIR}")
++    include("${CZ_ANDROID_DIR}/android.cmake")
++endif()
+diff --git a/runtime/gpu/shader_translator.cpp b/runtime/gpu/shader_translator.cpp
+index 61237ba..4330e55 100644
+--- a/runtime/gpu/shader_translator.cpp
++++ b/runtime/gpu/shader_translator.cpp
+@@ -864,6 +864,21 @@ static std::wstring Widen(const std::string& s)
+     return w;
+ }
+ 
++#if defined(__ANDROID__)
++// ANDROID: DXC (Clang-based, deeply recursive) on a 32 MB stack, not the ~1 MB bionic
++// gives the std::threads this is called from — the first-sight worker and the disc
++// pass's pool (the Android port's android_glue.h, force-included at global scope).
++static bool CompileSpirvImpl(const std::string& hlsl, bool isVs, uint32_t tag,
++                             std::vector<uint8_t>& spv, std::string& err);
++static bool CompileSpirv(const std::string& hlsl, bool isVs, uint32_t tag,
++                         std::vector<uint8_t>& spv, std::string& err)
++{
++    bool ok = false;
++    ::Dr2Android_RunOnLargeStack([&] { ok = CompileSpirvImpl(hlsl, isVs, tag, spv, err); });
++    return ok;
++}
++#define CompileSpirv CompileSpirvImpl
++#endif
+ static bool CompileSpirv(const std::string& hlsl, bool isVs, uint32_t tag,
+                          std::vector<uint8_t>& spv, std::string& err)
+ {
+@@ -960,6 +975,9 @@ static bool CompileSpirv(const std::string& hlsl, bool isVs, uint32_t tag,
+     object->Release();
+     return true;
+ }
++#if defined(__ANDROID__)
++#undef CompileSpirv
++#endif
+ 
+ // ---------------------------------------------------------------------------
+ // The pipeline, end to end.
+diff --git a/runtime/gpu/vk_renderer.cpp b/runtime/gpu/vk_renderer.cpp
+index 0a43804..d305bd2 100644
+--- a/runtime/gpu/vk_renderer.cpp
++++ b/runtime/gpu/vk_renderer.cpp
+@@ -21,6 +21,9 @@
+ #include "../cpu/thread_budget.h"
+ 
+ #include <vulkan/vulkan.h>
++#if defined(__ANDROID__)
++#include "android_glue.h"   // the Android port: the window-surface lifecycle
++#endif
+ 
+ #include <algorithm>
+ #include <array>
+@@ -15153,7 +15156,22 @@ bool CreateSwapchain(uint32_t wantW, uint32_t wantH)
+                             "TRANSFER_SRC on its images — the dump cannot run.\n");
+     }
+     sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
++#if defined(__ANDROID__)
++    // ANDROID PRE-ROTATION. A landscape game on a portrait-native phone has a surface
++    // whose currentTransform is ROTATE_90/270, while currentExtent (used above) is in
++    // the CURRENT, landscape orientation. Passing currentTransform would declare the
++    // image already rotated — it is not; the blit writes it upright — and the picture
++    // would come out sideways. IDENTITY asks the compositor to rotate it instead,
++    // which costs a composition pass but needs no change to the blit. (Rotating the
++    // final blit ourselves is the faster path, and the obvious later optimisation.)
++    // Android then reports VK_SUBOPTIMAL_KHR on every present; see the two
++    // SUBOPTIMAL branches, which must not turn that into a rebuild per frame.
++    sci.preTransform = (caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR)
++                           ? VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR
++                           : caps.currentTransform;
++#else
+     sci.preTransform = caps.currentTransform;
++#endif
+     sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+     sci.presentMode = mode;
+     sci.clipped = VK_TRUE;
+@@ -15231,9 +15249,49 @@ bool CreateSwapchain(uint32_t wantW, uint32_t wantH)
+ // setter is defined at global scope near VkRenderer_DumpStats.
+ std::atomic<bool> g_swapRebuildRequest{ false };
+ 
++#if defined(__ANDROID__)
++// ANDROID: FSR 1.0 at present (the launcher's UPSCALER row); see the file for why here.
++#include "android_fsr.inc"
++#endif
++
+ void RecordSwapchainBlit(Image& source, uint32_t width, uint32_t height)
+ {
+     R->swap.acquired = UINT32_MAX;
++#if defined(__ANDROID__)
++    // ANDROID: THE WINDOW SURFACE CAN DIE UNDER US (android_glue.h). When the app
++    // leaves the screen, the ANativeWindow behind R->swap.surface is destroyed; the
++    // Java side raises the flag and waits for this release. Let go of everything built
++    // on it, then hold the pump until a new window exists — the guest's next frame
++    // waits on this one, so the game pauses with the app rather than playing unseen.
++    if (Dr2Android_SurfaceLost())
++    {
++        if (R->swap.swapchain || R->swap.surface)
++        {
++            vkDeviceWaitIdle(R->device);
++            DestroySwapchainObjects();
++            if (R->swap.surface)
++                vkDestroySurfaceKHR(R->instance, R->swap.surface, nullptr);
++            R->swap.surface = VK_NULL_HANDLE;
++            fprintf(stderr, "[vk] android: window surface gone (app in background) — "
++                            "swapchain released, presents paused\n");
++        }
++        Dr2Android_SurfaceReleased();
++        while (Dr2Android_SurfaceLost())
++            std::this_thread::sleep_for(std::chrono::milliseconds(20));
++    }
++    if (!R->swap.surface)
++    {
++        uint64_t surfaceHandle = 0;
++        if (!Host_VulkanCreateSurface(R->instance, &surfaceHandle) || !surfaceHandle)
++        {
++            R->swap.acquireFails++;
++            Count("swap: android window surface not available yet, frame DROPPED");
++            return;
++        }
++        R->swap.surface = reinterpret_cast<VkSurfaceKHR>(surfaceHandle);
++        fprintf(stderr, "[vk] android: window surface recreated\n");
++    }
++#endif
+     if (g_swapRebuildRequest.exchange(false, std::memory_order_acq_rel))
+         R->swap.rebuildWanted = true;
+ 
+@@ -15346,7 +15404,12 @@ void RecordSwapchainBlit(Image& source, uint32_t width, uint32_t height)
+         // one. Suboptimal means the swapchain no longer matches the surface, which is a
+         // stale EXTENT more often than anything else.
+         R->swap.suboptimal++;
++#if !defined(__ANDROID__)
++        // ANDROID: not a stale swapchain there but the un-pre-rotated transform chosen
++        // in CreateSwapchain, every frame. A real size change still rebuilds — through
++        // the drawable-size comparison at the top of RecordSwapchainBlit.
+         R->swap.rebuildWanted = true;
++#endif
+     }
+     else if (rc != VK_SUCCESS)
+     {
+@@ -15446,6 +15509,21 @@ void RecordSwapchainBlit(Image& source, uint32_t width, uint32_t height)
+     blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+     blit.dstOffsets[0] = { fitX, fitY, 0 };
+     blit.dstOffsets[1] = { fitX + int32_t(fitW), fitY + int32_t(fitH), 1 };
++#if defined(__ANDROID__)
++    // ANDROID: FSR instead of the bilinear stretch when the frame is being ENLARGED and
++    // the player chose it; the 1:1 copy of its result is still a blit (format change).
++    Image* fsr = dr2fsr::Enabled() && (fitW > width || fitH > height)
++                     ? dr2fsr::Upscale(source, width, height, fitW, fitH)
++                     : nullptr;
++    if (fsr)
++    {
++        blit.srcOffsets[1] = { int32_t(fitW), int32_t(fitH), 1 };
++        vkCmdBlitImage(R->cmd, fsr->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
++                       R->swap.images[index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
++                       VK_FILTER_NEAREST);
++    }
++    else
++#endif
+     vkCmdBlitImage(R->cmd, source.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    R->swap.images[index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
+                    VK_FILTER_LINEAR);
+@@ -15703,13 +15781,23 @@ void PresentSwapchain()
+     pi.pSwapchains = &R->swap.swapchain;
+     pi.pImageIndices = &R->swap.acquired;
+     const VkResult rc = vkQueuePresentKHR(R->queue, &pi);
++#if defined(__ANDROID__)
++    // ANDROID: the launcher's optional FPS readout counts real presents (android_glue.h).
++    if (rc == VK_SUCCESS || rc == VK_SUBOPTIMAL_KHR)
++        Dr2Android_FramePresented();
++#endif
+     if (rc == VK_SUCCESS)
+         R->swap.presents++;
+     else if (rc == VK_SUBOPTIMAL_KHR)
+     {
+         R->swap.presents++;
+         R->swap.suboptimal++;
++#if !defined(__ANDROID__)
++        // ANDROID: not a stale swapchain there but the un-pre-rotated transform chosen
++        // in CreateSwapchain, every frame. A real size change still rebuilds — through
++        // the drawable-size comparison at the top of RecordSwapchainBlit.
+         R->swap.rebuildWanted = true;
++#endif
+     }
+     else if (rc == VK_ERROR_OUT_OF_DATE_KHR)
+     {
+diff --git a/runtime/host/bug_report.cpp b/runtime/host/bug_report.cpp
+index 61cbe91..26f89e1 100644
+--- a/runtime/host/bug_report.cpp
++++ b/runtime/host/bug_report.cpp
+@@ -53,6 +53,11 @@
+ #elif defined(__APPLE__)
+ #include <sys/sysctl.h>
+ #include <sys/utsname.h>
++#elif defined(__ANDROID__)
++#include <sys/sysinfo.h>
++#include <sys/system_properties.h>
++#include <sys/utsname.h>
++#include <fstream>
+ #else
+ #include <sys/sysinfo.h>
+ #include <sys/utsname.h>
+@@ -132,6 +137,14 @@ std::string CpuBrand()
+     size_t n = sizeof brand - 1;
+     if (sysctlbyname("machdep.cpu.brand_string", brand, &n, nullptr, 0) != 0)
+         return "unknown";
++#elif defined(__ANDROID__)
++    // No CPUID on ARM. ro.soc.* (Android 12+) names the chip ("SM8650"); older
++    // releases only have the board platform ("kalama").
++    char maker[PROP_VALUE_MAX] = "", soc[PROP_VALUE_MAX] = "";
++    __system_property_get("ro.soc.manufacturer", maker);
++    if (__system_property_get("ro.soc.model", soc) <= 0)
++        __system_property_get("ro.board.platform", soc);
++    snprintf(brand, sizeof brand, "%s%s%s", maker, *maker ? " " : "", *soc ? soc : "unknown");
+ #else
+     unsigned a, b, c, d;
+     for (unsigned i = 0; i < 3; i++)
+diff --git a/runtime/host/first_run.cpp b/runtime/host/first_run.cpp
+index a520dfb..de5c86c 100644
+--- a/runtime/host/first_run.cpp
++++ b/runtime/host/first_run.cpp
+@@ -171,6 +171,18 @@ std::string Explain(Status s, const std::string& xexPath)
+     }
+ 
+     case Status::NoShaderCache:
++#if defined(__ANDROID__)
++        // ANDROID: the shaders are translated by DXC, which has no Android build, so
++        // a phone cannot make this cache itself. It is platform-independent SPIR-V.
++        return "No translated shader cache.\n"
++               "\n"
++               "  Missing: " + HostPaths::ShaderCache().string() + "\n"
++               "\n"
++               "  A phone cannot build it (the shader compiler, DXC, has no Android\n"
++               "  build). Make it on a PC from your own game package with\n"
++               "      scripts/prepare-assets.sh\n"
++               "  from the Android port's repo, then use IMPORT PREPARED ASSETS in the app.\n";
++#endif
+         return "No translated shader cache.\n"
+                "\n"
+                "  Missing: " + HostPaths::ShaderCache().string() + "\n"
+diff --git a/runtime/host/host_paths.cpp b/runtime/host/host_paths.cpp
+index 563283d..31d3859 100644
+--- a/runtime/host/host_paths.cpp
++++ b/runtime/host/host_paths.cpp
+@@ -68,6 +68,16 @@ std::filesystem::path QueryExePath()
+     std::error_code ec;
+     auto p = std::filesystem::weakly_canonical(std::filesystem::path(buf.data()), ec);
+     return ec ? std::filesystem::path(buf.data()) : p;
++#elif defined(__ANDROID__)
++    // ANDROID: the process image is the zygote's app_process64, so /proc/self/exe
++    // would put ExeDir() in /system/bin. The app copies what a desktop release ships
++    // beside the executable (cz_defaults.env, vs_recipes.bin, prewarm.keys,
++    // kbm_chips/) out of the APK into one private directory and names it here; the
++    // file name is only for the log line. No fallback: a missing variable is a bug in
++    // the Java side, and ExeDir() then reports "." exactly as a failed query does.
++    if (const char* d = std::getenv("DR2_SHIPPED_DIR"); d && *d)
++        return std::filesystem::path(d) / "libmain.so";
++    return {};
+ #else
+     char buf[4096];
+     const ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
+diff --git a/runtime/host/settings.cpp b/runtime/host/settings.cpp
+index 1784c11..b25a972 100644
+--- a/runtime/host/settings.cpp
++++ b/runtime/host/settings.cpp
+@@ -152,6 +152,21 @@ void Settings_Load(const std::string& path)
+     FILE* f = fopen(path.c_str(), "r");
+     if (!f)
+     {
++#if defined(__ANDROID__)
++        // ANDROID: the first-run internal resolution follows the phone's screen shape.
++        // The app passes 720 lines at the display's aspect (DR2_DEFAULT_RES, e.g.
++        // 1600x720 on a 20:9 phone). A DEFAULT exactly like the Deck build's compiled
++        // one, not a pin: once the player saves a resolution, this file wins.
++        if (const char* r = getenv("DR2_DEFAULT_RES"))
++        {
++            uint32_t w = 0, h = 0;
++            if (sscanf(r, "%ux%u", &w, &h) == 2 && Settings_ValidInternalRes(w, h))
++            {
++                g_state.resW = w;
++                g_state.resH = h;
++            }
++        }
++#endif
+         // Printed FROM the defaults rather than as a fixed string: this line said
+         // "windowed, 1280x720" whatever the build's defaults were, and the Deck
+         // variant would have had it stating the wrong resolution on the one run
+@@ -462,7 +477,15 @@ void Settings_SetLanguage(int id)
+ // gpu/vk_renderer.cpp) — 4:3 and 5:4 would put the UI in a 75-80% band and stay refused.
+ bool Settings_ValidInternalRes(uint32_t w, uint32_t h)
+ {
+-    return h >= 720 && h <= 2880 && (w & 1) == 0 && w >= 1280 && w <= 6880 &&
++#if defined(__ANDROID__)
++    // ANDROID: down to 540 lines (0.75 of the title's 720) for phone GPUs — the
++    // renderer's scaling is rational and truncating (vk_renderer.cpp, gotcha 373), and
++    // the launcher offers it as EXPERIMENTAL, best with FSR. Desktop keeps 720.
++    const uint32_t minH = 540, minW = 960;
++#else
++    const uint32_t minH = 720, minW = 1280;
++#endif
++    return h >= minH && h <= 2880 && (w & 1) == 0 && w >= minW && w <= 6880 &&
+            uint64_t(w) * 10 >= uint64_t(h) * 16;
+ }
+ 
+diff --git a/runtime/host/window.cpp b/runtime/host/window.cpp
+index 654eb84..91a6261 100644
+--- a/runtime/host/window.cpp
++++ b/runtime/host/window.cpp
+@@ -196,6 +196,9 @@ int Host_DisplayModeList(uint32_t*, int) { return 0; }
+ // VK_NULL_HANDLE only exists with the real header.
+ #include <vulkan/vulkan.h>
+ #include <SDL_vulkan.h>
++#if defined(__ANDROID__)
++#include <SDL_syswm.h>   // the ANativeWindow, for vkCreateAndroidSurfaceKHR
++#endif
+ #if defined(__APPLE__)
+ #include <SDL_metal.h>
+ #include <vulkan/vulkan_metal.h>
+@@ -1706,6 +1709,15 @@ static void PreferWaylandWhenOffered()
+ // else in the process is touched.
+ void Host_DiagVideo()
+ {
++#if defined(__ANDROID__)
++    // ANDROID: --diag runs from the launcher activity's process, where SDL's Java side
++    // (SDLActivity) does not exist and initialising SDL video would crash. The video
++    // facts that matter there come from the Vulkan half of --diag.
++    fprintf(stderr, "[diag] sdl: video probe skipped on Android (run from the launcher, "
++                    "which has no SDL activity); SDL %d.%d.%d\n",
++            SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_PATCHLEVEL);
++    return;
++#endif
+     const char* T = "[diag] sdl:";
+     SDL_version compiled, linked;
+     SDL_VERSION(&compiled);
+@@ -1751,6 +1763,15 @@ bool Host_ProgressBegin(const char* title)
+ {
+     if (getenv("CZ_NO_WINDOW"))
+         return false;
++#if defined(__ANDROID__)
++    // ANDROID: SDL has exactly one window there — the activity's surface — and the
++    // game's Vulkan window must be the one that gets it. A GLES progress window made
++    // and destroyed first would leave that surface connected to EGL. The app's
++    // launcher runs the first-run steps itself (with its own progress UI) before it
++    // starts the game, so anything still owed here runs headless and is logged.
++    (void)title;
++    return false;
++#endif
+     if (g_progWindow)
+         return true;
+     DeclareDpiAwareness();
+@@ -2871,6 +2892,13 @@ std::vector<const char*> Host_VulkanInstanceExtensions()
+     std::vector<const char*> out;
+     if (!Host_VulkanSwapchainWanted())
+         return out;
++#if defined(__ANDROID__)
++    // ANDROID builds its surface itself too (Host_VulkanCreateSurface), so the two
++    // extensions are known; SDL is not asked.
++    out.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
++    out.push_back(VK_KHR_ANDROID_SURFACE_EXTENSION_NAME);
++    return out;
++#endif
+ #if defined(__APPLE__)
+     // macOS builds its surface itself from the main-thread CAMetalLayer
+     // (Host_VulkanCreateSurface), so the two extensions that needs are known and SDL is
+@@ -2907,6 +2935,35 @@ bool Host_VulkanCreateSurface(void* instance, uint64_t* outSurface)
+ {
+     if (!Host_VulkanSwapchainWanted() || !instance || !outSurface)
+         return false;
++#if defined(__ANDROID__)
++    // ANDROID: the surface is made here, through the loader the renderer's instance
++    // came from (volk; the Android port's android_vulkan.cpp). SDL_Vulkan_CreateSurface
++    // would go through SDL's own copy of the SYSTEM loader, which knows nothing of an
++    // instance created by the bundled Turnip driver. The ANativeWindow is SDL's current
++    // one — after a background/foreground cycle, the new one.
++    {
++        SDL_SysWMinfo wm;
++        SDL_VERSION(&wm.version);
++        if (!SDL_GetWindowWMInfo(g_window, &wm) || !wm.info.android.window)
++        {
++            fprintf(stderr, "[host] no ANativeWindow yet: %s\n", SDL_GetError());
++            return false;
++        }
++        VkAndroidSurfaceCreateInfoKHR aci{ VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR };
++        aci.window = wm.info.android.window;
++        VkSurfaceKHR as = VK_NULL_HANDLE;
++        const VkResult rc = vkCreateAndroidSurfaceKHR
++            ? vkCreateAndroidSurfaceKHR(static_cast<VkInstance>(instance), &aci, nullptr, &as)
++            : VK_ERROR_EXTENSION_NOT_PRESENT;
++        if (rc != VK_SUCCESS)
++        {
++            fprintf(stderr, "[host] vkCreateAndroidSurfaceKHR failed (%d)\n", int(rc));
++            return false;
++        }
++        *outSurface = reinterpret_cast<uint64_t>(as);
++        return true;
++    }
++#endif
+ #if defined(__APPLE__)
+     // macOS: build the surface from the CAMetalLayer the WINDOW THREAD made (see
+     // g_metalLayer). SDL_Vulkan_CreateSurface would create and attach a fresh NSView
+diff --git a/runtime/kernel/imports.cpp b/runtime/kernel/imports.cpp
+index 93f9037..35f13f1 100644
+--- a/runtime/kernel/imports.cpp
++++ b/runtime/kernel/imports.cpp
+@@ -72,6 +72,7 @@
+ #include "../host/log_file.h"  // the exit paths drain the log file's tee (part 105)
+ #include "../host/settings.h"
+ #include "../host/window.h"   // XamInputGetState's device (phase 3)
++#include <ctime>
+ #include "content.h"          // the save-data layer: enumerators and their message
+ #include "guestcall.h"
+ #include "heap.h"
+@@ -5579,8 +5580,22 @@ static uint32_t DispatchAppMessage(uint32_t app, uint32_t message, void* buffer,
+                     g_memory.Translate(arrayVa + i * sizeof(GuestXUserAchievement)));
+                 const uint32_t id = a->achievementId.get();
+                 if (g_achievements.emplace(a->userIndex.get(), id).second)
++                {
+                     KLOG("achievement unlocked: user %u id %u (%zu earned)\n",
+                          a->userIndex.get(), id, g_achievements.size());
++#if defined(__ANDROID__)
++                    // ANDROID: the offline default profile has no libxlive to keep
++                    // them (xlive_glue.cpp), so they would die with the process. One
++                    // "id<TAB>unix-time" line each, beside the settings file, for the
++                    // launcher's ACHIEVEMENTS screen; a repeat in a later run is
++                    // de-duplicated there.
++                    if (FILE* af = fopen((ContentSettingsDir() / "achievements.txt").string().c_str(), "a"))
++                    {
++                        fprintf(af, "%u\t%lld\n", id, (long long)time(nullptr));
++                        fclose(af);
++                    }
++#endif
++                }
+                 // An achievement id is 16 bits on this platform (XACH stores it
+                 // as one, and this title's are 63..74). A wider value is a
+                 // corrupt message, not an achievement, so it is kept in the
+diff --git a/runtime/main.cpp b/runtime/main.cpp
+index 0106a23..2722713 100644
+--- a/runtime/main.cpp
++++ b/runtime/main.cpp
+@@ -37,6 +37,9 @@
+ // WIN32_LEAN_AND_MEAN + the SDL/renderer macro set under clang-cl; the one prototype is
+ // declared here instead (MMRESULT is UINT).
+ extern "C" unsigned int __stdcall timeBeginPeriod(unsigned int uPeriod);
++#elif defined(__ANDROID__)
++#include <sys/system_properties.h>
++#include <sys/utsname.h>
+ #elif !defined(__APPLE__)
+ #include <gnu/libc-version.h>
+ #include <sys/utsname.h>
+@@ -230,6 +233,21 @@ bool RunDiag()
+     }
+ #elif defined(__APPLE__)
+     fprintf(stderr, "%s os: macOS\n", T);
++#elif defined(__ANDROID__)
++    {
++        // Android: bionic, not glibc, and no /etc/os-release. The facts a bug report
++        // needs are the release, the API level and the device.
++        struct utsname u{};
++        uname(&u);
++        char rel[PROP_VALUE_MAX] = "", sdk[PROP_VALUE_MAX] = "", maker[PROP_VALUE_MAX] = "",
++             model[PROP_VALUE_MAX] = "";
++        __system_property_get("ro.build.version.release", rel);
++        __system_property_get("ro.build.version.sdk", sdk);
++        __system_property_get("ro.product.manufacturer", maker);
++        __system_property_get("ro.product.model", model);
++        fprintf(stderr, "%s os: Android %s (API %s), kernel %s %s; device %s %s\n", T, rel, sdk,
++                u.release, u.machine, maker, model);
++    }
+ #else
+     {
+         struct utsname u{};
+@@ -455,6 +473,117 @@ int main(int argc, char** argv)
+         return 0;
+     }
+ 
++#if defined(__ANDROID__)
++    // ANDROID: --dump-spa <out> — write the title's SPA (the XDBF that carries its
++    // achievement list, names, descriptions, gamerscore and icons) for the launcher's
++    // ACHIEVEMENTS screen. Read from the player's own default.xex: the XEX resource
++    // named by the title id; failing that, the first plausible XDBF in the image;
++    // failing that, a *.spa file in the game folder.
++    if (argc > 1 && strcmp(argv[1], "--dump-spa") == 0)
++    {
++        if (argc != 3)
++        {
++            fprintf(stderr, "usage: --dump-spa <out.spa>\n");
++            return 2;
++        }
++        auto save = [&](const uint8_t* p, size_t n, const char* how) {
++            FILE* f = fopen(argv[2], "wb");
++            if (!f || fwrite(p, 1, n, f) != n)
++            {
++                if (f)
++                    fclose(f);
++                fprintf(stderr, "[spa] cannot write %s\n", argv[2]);
++                return 1;
++            }
++            fclose(f);
++            fprintf(stderr, "[spa] %zu bytes (%s) -> %s\n", n, how, argv[2]);
++            return 0;
++        };
++        std::error_code ec;
++        for (const auto& e : std::filesystem::directory_iterator(HostPaths::Game(), ec))
++        {
++            std::string ext = e.path().extension().string();
++            for (auto& ch : ext)
++                ch = char(tolower(ch));
++            if (ext == ".spa" && e.is_regular_file(ec))
++            {
++                auto spa = LoadFile(e.path().string().c_str());
++                if (spa.size() > 24 && memcmp(spa.data(), "XDBF", 4) == 0)
++                    return save(spa.data(), spa.size(), "game folder");
++            }
++        }
++        const std::string xexPath = HostPaths::GameXex().string();
++        auto file = LoadFile(xexPath.c_str());
++        if (file.size() < 24 || memcmp(file.data(), "XEX2", 4) != 0)
++        {
++            fprintf(stderr, "[spa] %s is not an XEX2\n", xexPath.c_str());
++            return 1;
++        }
++        Image image = Image::ParseImage(file.data(), file.size());
++        if (image.size == 0 || !image.data)
++        {
++            fprintf(stderr, "[spa] the XEX did not load\n");
++            return 1;
++        }
++        auto be32 = [](const uint8_t* p) {
++            return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3];
++        };
++        // Optional headers: count at +0x14, then {key, value} pairs from +0x18.
++        // XEX_HEADER_RESOURCE_INFO (0x2FF) points at {size, {name[8], va, size}...};
++        // XEX_HEADER_EXECUTION_INFO (0x40006) at the title id (+0x0C).
++        uint32_t titleId = 0, resOff = 0;
++        const uint32_t nOpt = be32(file.data() + 0x14);
++        for (uint32_t i = 0; i < nOpt && 0x18 + i * 8 + 8 <= file.size(); ++i)
++        {
++            const uint32_t key = be32(file.data() + 0x18 + i * 8);
++            const uint32_t val = be32(file.data() + 0x18 + i * 8 + 4);
++            if (key == 0x2FF)
++                resOff = val;
++            else if (key == 0x40006 && val + 0x10 <= file.size())
++                titleId = be32(file.data() + val + 0x0C);
++        }
++        char want[9];
++        snprintf(want, sizeof want, "%08X", titleId);
++        if (resOff && resOff + 4 <= file.size())
++        {
++            const uint32_t blk = be32(file.data() + resOff);
++            for (uint32_t off = 4; off + 16 <= blk && resOff + off + 16 <= file.size(); off += 16)
++            {
++                const uint8_t* r = file.data() + resOff + off;
++                const uint32_t va = be32(r + 8), sz = be32(r + 12);
++                if (memcmp(r, want, 8) == 0 && va >= image.base &&
++                    uint64_t(va - image.base) + sz <= image.size &&
++                    memcmp(image.data.get() + (va - image.base), "XDBF", 4) == 0)
++                    return save(image.data.get() + (va - image.base), sz, "XEX resource");
++            }
++        }
++        // A scan, for a title that keeps it elsewhere. The XDBF header gives its own
++        // extent: 24 + entries*18 + free*8 + the content the entries point into.
++        for (size_t at = 0; at + 24 <= image.size; at += 4)
++        {
++            const uint8_t* p = image.data.get() + at;
++            if (memcmp(p, "XDBF", 4) != 0)
++                continue;
++            const uint32_t entLen = be32(p + 8), entCnt = be32(p + 12), freeLen = be32(p + 16);
++            if (!entCnt || entCnt > entLen || entLen > 4096 || freeLen > 4096)
++                continue;
++            const size_t content = 24 + size_t(entLen) * 18 + size_t(freeLen) * 8;
++            size_t end = content;
++            for (uint32_t i = 0; i < entCnt && at + 24 + i * 18 + 18 <= image.size; ++i)
++            {
++                const uint8_t* e = p + 24 + i * 18;
++                const size_t entEnd = content + be32(e + 10) + be32(e + 14);
++                if (entEnd > end)
++                    end = entEnd;
++            }
++            if (at + end <= image.size)
++                return save(p, end, "image scan");
++        }
++        fprintf(stderr, "[spa] no SPA found for title %s\n", want);
++        return 1;
++    }
++#endif
++
+     // Release §2.3 step 2: the extract by hand — what the first-run hook below runs
+     // automatically, exposed for the byte-identity gate against the Python reference
+     // (tools/extract_stfs.py) and for unpacking a package deliberately.
