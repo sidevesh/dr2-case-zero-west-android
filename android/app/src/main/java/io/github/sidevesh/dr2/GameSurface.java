@@ -22,6 +22,7 @@ public class GameSurface extends SDLSurface {
 
     @Override
     public void surfaceDestroyed(SurfaceHolder holder) {
+        if (GameActivity.sWatchdog != null) GameActivity.sWatchdog.note("surface destroyed");
         NativeBridge.surfaceLost();
         super.surfaceDestroyed(holder);
     }
@@ -30,5 +31,7 @@ public class GameSurface extends SDLSurface {
     public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
         super.surfaceChanged(holder, format, width, height);
         NativeBridge.surfaceRestored();
+        if (GameActivity.sWatchdog != null)
+            GameActivity.sWatchdog.note("surface ready " + width + "x" + height);
     }
 }

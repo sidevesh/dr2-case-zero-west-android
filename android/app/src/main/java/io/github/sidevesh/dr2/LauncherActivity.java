@@ -925,6 +925,9 @@ public class LauncherActivity extends Activity {
         section("TOOLS");
         button("Check this device", "The runtime's own Vulkan check, with the driver chosen above",
                 v -> { if (!mBusy && mNativeOk) checkDevice(); });
+        button("Performance log of the last session", "Frame stalls, memory, swap and "
+                + "temperature through the last game session — for blackouts and slowdowns",
+                v -> showText("Performance log", Fs.tail(PerfWatchdog.file(this), 64 * 1024)));
         button("Advanced: environment", "KEY=VALUE switches for the runtime (" + BuildConfig.ENV_PREFIX
                 + "_*), for debugging", v -> advanced());
         button("Regenerate overlays", "Rebuild the patched menu and prompt assets from the game data",

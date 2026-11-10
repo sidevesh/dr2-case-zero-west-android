@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.1
+
+- A performance log for each game session (SYSTEM › Performance log of the last
+  session): moments the picture stopped updating, with free memory, swap, GPU memory
+  and the phone's thermal state, plus a line every 10 seconds — to track down
+  blackouts and slowdowns that grow over a long session.
+
 ## 1.1.0
 
 - The launcher wears each game's own artwork: its background scene and logo, read from

@@ -30,6 +30,8 @@ public class GameActivity extends SDLActivity {
     private TextView mFps;
     private final Handler mHandler = new Handler(Looper.getMainLooper());
     private long mFpsLastCount = -1, mFpsLastTime;
+    /** The flight recorder (PerfWatchdog); static so GameSurface can report surface edges. */
+    static PerfWatchdog sWatchdog;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -56,6 +58,26 @@ public class GameActivity extends SDLActivity {
         hideSystemBars();
         maybeAddTouchControls();
         maybeAddFpsCounter();
+        sWatchdog = new PerfWatchdog(this);
+        sWatchdog.start();
+    }
+
+    @Override
+    protected void onPause() {
+        if (sWatchdog != null) sWatchdog.note("activity paused");
+        super.onPause();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (sWatchdog != null) sWatchdog.note("activity resumed");
+    }
+
+    @Override
+    public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        if (sWatchdog != null) sWatchdog.note("Android asked to trim memory (level " + level + ")");
     }
 
     /**
@@ -161,6 +183,7 @@ public class GameActivity extends SDLActivity {
 
     @Override
     protected void onDestroy() {
+        if (sWatchdog != null) { sWatchdog.stop(); sWatchdog = null; }
         mHandler.removeCallbacks(mFpsTick);
         if (mTouch != null) mTouch.detach();
         super.onDestroy();
