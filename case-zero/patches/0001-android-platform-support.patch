@@ -106,7 +106,7 @@ index e9ba871..0bab0a3 100644
                   callback, userData);
      }
 diff --git a/runtime/gpu/vk_renderer.cpp b/runtime/gpu/vk_renderer.cpp
-index 0a43804..b3133ab 100644
+index 0a43804..be43332 100644
 --- a/runtime/gpu/vk_renderer.cpp
 +++ b/runtime/gpu/vk_renderer.cpp
 @@ -21,6 +21,9 @@
@@ -400,7 +400,7 @@ index 0a43804..b3133ab 100644
      }
      else if (rc == VK_ERROR_OUT_OF_DATE_KHR)
      {
-@@ -15826,6 +15989,75 @@ float LumScaleNow()
+@@ -15826,6 +15989,161 @@ float LumScaleNow()
      return float(Settings_ExposureX10()) * 0.1f;
  }
  
@@ -454,8 +454,17 @@ index 0a43804..b3133ab 100644
 +}
 +void ExposureWatchFrame(uint32_t draws, float expMax)
 +{
-+    if (!ExposureWatchOn() || draws == 0 || !(expMax > 0.0f))
++    if (!ExposureWatchOn() || draws == 0)
 +        return;
++    if (!std::isfinite(expMax) || expMax <= 0.0f)
++    {
++        static uint64_t quietBad = 0;
++        if (R->frame >= quietBad && ExposureWatchBudget())
++            fprintf(stderr, "[exposure] frame %llu: the title's exposure is %g\n",
++                    (unsigned long long)R->frame, double(expMax));
++        quietBad = R->frame + 30;
++        return;
++    }
 +    // A ring of the last 16 frames' exposure; compare against the brightest of them.
 +    static float ring[16] = {};
 +    static uint32_t n = 0;
@@ -471,12 +480,98 @@ index 0a43804..b3133ab 100644
 +                double(peak / expMax));
 +        quietUntil = R->frame + 30;
 +    }
++    float low = 1e30f;
++    for (float e : ring) if (e > 0.0f) low = std::min(low, e);
++    static uint64_t quietRise = 0;
++    if (low < 1e30f && expMax / low > 3.0f && R->frame >= quietRise && ExposureWatchBudget())
++    {
++        fprintf(stderr, "[exposure] frame %llu: the title's exposure rose %.4f -> %.2f "
++                        "(%.0fx) within 16 frames\n",
++                (unsigned long long)R->frame, double(low), double(expMax),
++                double(expMax / low));
++        quietRise = R->frame + 30;
++    }
++}
++
++// THE BLACK-MEASUREMENT HOLD (Android; part of the exposure fix). A player's log
++// (SM8550, wide 720p) showed every luminance surface the controller reads drop to
++// exactly black — raw 0/255 across the whole chain, in one frame — for 2 to ~210 frames,
++// and each episode end on a jump far brighter than before. That is a feedback loop: one
++// black frame measures zero, the controller drives the exposure off a cliff, the picture
++// stays black for seconds, and comes back over-exposed. Dark scenes in the same log read
++// 1-4/255, never 0, so an exactly-black chain straight after a normal one is treated as
++// "no new data": the previous bytes stay in guest memory, for at most kLumHoldFrames. A
++// longer black (a loading screen, a fade) is then let through as it is.
++// DR2_LUM_HOLD=0 is the control arm.
++constexpr uint64_t kLumHoldFrames = 150;
++uint64_t g_lumHoldEpisodes = 0, g_lumHoldFrames = 0;
++bool LumHoldOverBlack(uint32_t dest, uint32_t destFmt, const uint8_t* px, uint32_t w,
++                      uint32_t h, uint32_t hw, uint32_t hh)
++{
++#if defined(__ANDROID__)
++    static const bool on = [] {
++        const char* v = getenv("DR2_LUM_HOLD");
++        return !(v && *v == '0');
++    }();
++    if (!on || destFmt != 30 || !w || !h || !hw || !hh)
++        return false;
++    // Every host texel of the copied window, channel 0 (the one encoded): all zero?
++    bool black = true;
++    for (uint32_t i = 0; i < hw * hh && black; ++i)
++        if (px[size_t(i) * 4] != 0)
++            black = false;
++    struct State { bool good = false; uint64_t since = 0; bool holding = false; };
++    static std::unordered_map<uint32_t, State> st;
++    State& S = st[dest];
++    if (!black)
++    {
++        if (S.holding && ExposureWatchOn() && ExposureWatchBudget())
++            fprintf(stderr, "[lum] frame %llu: %08X measures again after %llu held frame(s)\n",
++                    (unsigned long long)R->frame, dest,
++                    (unsigned long long)(R->frame - S.since));
++        S.good = true;
++        S.holding = false;
++        return false;
++    }
++    if (!S.good)
++        return false;                       // nothing good to hold yet
++    if (!S.holding)
++    {
++        S.holding = true;
++        S.since = R->frame;
++        ++g_lumHoldEpisodes;
++        if (ExposureWatchOn() && ExposureWatchBudget())
++            fprintf(stderr, "[lum] frame %llu: %08X measured all-black — holding the last "
++                            "value (up to %llu frames)\n",
++                    (unsigned long long)R->frame, dest, (unsigned long long)kLumHoldFrames);
++    }
++    if (R->frame - S.since > kLumHoldFrames)
++    {
++        S.good = false;                     // a real long black: let it through
++        S.holding = false;
++        return false;
++    }
++    ++g_lumHoldFrames;
++    return true;
++#else
++    (void)dest; (void)destFmt; (void)px; (void)w; (void)h; (void)hw; (void)hh;
++    return false;
++#endif
 +}
 +
  int RetireOldestFrame()
  {
      // Slots are used strictly in ring order, so when the frame just submitted is `s` the
-@@ -15968,6 +16200,7 @@ int RetireOldestFrame()
+@@ -15893,6 +16211,8 @@ int RetireOldestFrame()
+         for (const auto& g : fs.writebacks)
+         {
+             const uint8_t* px = fs.wb.mapped + g.offset;
++            if (LumHoldOverBlack(g.dest, g.destFmt, px, g.w, g.h, g.hw, g.hh))
++                continue;   // keep the last good measurement in guest memory
+             for (uint32_t y = 0; y < g.h; ++y)
+                 for (uint32_t x = 0; x < g.w; ++x)
+                 {
+@@ -15968,6 +16288,7 @@ int RetireOldestFrame()
                          // one: it would be a fudge factor standing in for whatever makes
                          // our scene darker than hardware's before exposure is applied.
                          v *= LumScaleNow();
@@ -484,7 +579,7 @@ index 0a43804..b3133ab 100644
                          const uint16_t hv = halfOf(v);
                          uint8_t* dst = g_guestBase + PhysToVa(g.dest) + idx * 2;
                          if (g.endian == 1)
-@@ -31640,6 +31873,7 @@ void DoSwapImpl(uint8_t* base, uint32_t frontBuffer, uint32_t width, uint32_t he
+@@ -31640,6 +31961,7 @@ void DoSwapImpl(uint8_t* base, uint32_t frontBuffer, uint32_t width, uint32_t he
          // Reset unconditionally, including when the file could not be opened, so the
          // counters never accumulate across frames in a run that is not tracing.
      }
@@ -492,10 +587,14 @@ index 0a43804..b3133ab 100644
      R->expDraws = 0;
  
      static FILE* statsFile = nullptr;
-@@ -35068,6 +35302,12 @@ void VkRenderer_DumpStats()
+@@ -35068,6 +35390,16 @@ void VkRenderer_DumpStats()
                  "uploads served real bytes (%zu entries held)\n",
                  (unsigned long long)g_goldenStored, (unsigned long long)g_goldenServed,
                  g_goldenTex.size());
++    if (g_lumHoldEpisodes)
++        fprintf(stderr, "[vk]   luminance hold: %llu all-black measurement episode(s), %llu "
++                        "write-back(s) held at the last good value\n",
++                (unsigned long long)g_lumHoldEpisodes, (unsigned long long)g_lumHoldFrames);
 +    if (!g_noGolden && kGoldenMemMaxBytes)
 +        fprintf(stderr, "[vk]   golden texture store: %.1f MB held of a %llu MB cap, %llu new "
 +                        "textures not remembered because it was full\n",

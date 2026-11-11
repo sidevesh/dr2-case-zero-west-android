@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.5
+
+- Case Zero: the long blackouts that end with the picture too bright. The game
+  measures the scene's brightness to set its exposure; a log showed that measurement
+  dropping to exactly black for up to ~8 seconds and then jumping far brighter than
+  before, the exposure controller chasing a black frame. An all-black measurement
+  straight after a normal one is now treated as "no new data" and the last good one is
+  kept (for up to ~5 s; real dark scenes never measure exactly black). DR2_LUM_HOLD=0
+  turns it off.
+- The exposure watch also reports the exposure rising sharply, or becoming zero or
+  invalid.
+
 ## 1.1.4
 
 - Case Zero: an exposure watch in the game log, to find the remaining blackouts (the
