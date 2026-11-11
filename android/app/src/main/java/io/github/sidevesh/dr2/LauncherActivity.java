@@ -830,6 +830,28 @@ public class LauncherActivity extends Activity {
         toggle("Haptic feedback", "A short buzz on each button press",
                 p.getBoolean(GameEnv.PREF_HAPTICS, true),
                 on -> p.edit().putBoolean(GameEnv.PREF_HAPTICS, on).apply());
+        toggle("Auto-mash", "Holding A, B, X or Y repeats it rapidly — for the button-mash "
+                + "escapes when a zombie grabs you", p.getBoolean(GameEnv.PREF_AUTOMASH, false),
+                on -> p.edit().putBoolean(GameEnv.PREF_AUTOMASH, on).apply());
+        toggle("RUN button", "A button above the move stick: tap it and Chuck keeps running "
+                + "the way you last moved (steer with the stick); tap again to stop",
+                p.getBoolean(GameEnv.PREF_RUN_BUTTON, true),
+                on -> p.edit().putBoolean(GameEnv.PREF_RUN_BUTTON, on).apply());
+        toggle("In-game menu button", "A small ≡ at the top of the screen: cheats, FPS, FSR, "
+                + "touch and gyro settings while you play",
+                p.getBoolean(GameEnv.PREF_MENU_BUTTON, true),
+                on -> p.edit().putBoolean(GameEnv.PREF_MENU_BUTTON, on).apply());
+        section("CHEATS");
+        toggle("God mode", "Chuck cannot be hurt", p.getBoolean(GameEnv.PREF_CHEAT_GOD, false),
+                on -> p.edit().putBoolean(GameEnv.PREF_CHEAT_GOD, on).apply());
+        toggle("Zombies ignore you", "Zombies do not attack humans — walk through crowds",
+                p.getBoolean(GameEnv.PREF_CHEAT_IGNORE, false),
+                on -> p.edit().putBoolean(GameEnv.PREF_CHEAT_IGNORE, on).apply());
+        toggle("Infinite weapon durability", "Weapons and props never break",
+                p.getBoolean(GameEnv.PREF_CHEAT_DURABILITY, false),
+                on -> p.edit().putBoolean(GameEnv.PREF_CHEAT_DURABILITY, on).apply());
+        note("The game's own developer switches, on from the first frame; the in-game menu "
+                + "turns them on and off while playing. Achievements still unlock with them on.");
         section("GYRO AIMING");
         android.hardware.SensorManager sm = getSystemService(android.hardware.SensorManager.class);
         boolean hasGyro = sm != null && sm.getDefaultSensor(android.hardware.Sensor.TYPE_GYROSCOPE) != null;

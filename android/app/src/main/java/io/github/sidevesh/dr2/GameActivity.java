@@ -11,6 +11,8 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.InputDevice;
+import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
@@ -28,6 +30,7 @@ import org.libsdl.app.SDLSurface;
 public class GameActivity extends SDLActivity {
     private TouchControlsView mTouch;
     private TextView mFps;
+    private InGameMenu mMenu;
     private final Handler mHandler = new Handler(Looper.getMainLooper());
     private long mFpsLastCount = -1, mFpsLastTime;
     /** The flight recorder (PerfWatchdog); static so GameSurface can report surface edges. */
@@ -58,6 +61,8 @@ public class GameActivity extends SDLActivity {
         hideSystemBars();
         maybeAddTouchControls();
         maybeAddFpsCounter();
+        mMenu = new InGameMenu(this);
+        mMenu.attach(mLayout);
         sWatchdog = new PerfWatchdog(this);
         sWatchdog.start();
     }
@@ -92,7 +97,7 @@ public class GameActivity extends SDLActivity {
 
     /** SHOW FPS: frames actually presented (native counter), twice a second. */
     private void maybeAddFpsCounter() {
-        if (!GameEnv.prefs(this).getBoolean(GameEnv.PREF_SHOW_FPS, false) || mLayout == null) return;
+        if (mLayout == null) return;
         mFps = new TextView(this);
         mFps.setTextColor(Color.WHITE);
         mFps.setTextSize(12);
@@ -106,7 +111,70 @@ public class GameActivity extends SDLActivity {
         lp.addRule(RelativeLayout.ALIGN_PARENT_BOTTOM);
         lp.addRule(RelativeLayout.ALIGN_PARENT_START);
         mLayout.addView(mFps, lp);
-        mHandler.post(mFpsTick);
+        setFpsVisible(GameEnv.prefs(this).getBoolean(GameEnv.PREF_SHOW_FPS, false));
+    }
+
+    // ---- live settings (InGameMenu) ------------------------------------------------------
+
+    ViewGroup gameLayout() { return mLayout; }
+
+    void setFpsVisible(boolean on) {
+        if (mFps == null) return;
+        mHandler.removeCallbacks(mFpsTick);
+        mFps.setVisibility(on ? View.VISIBLE : View.GONE);
+        mFpsLastCount = -1;
+        mFps.setText("");
+        if (on) mHandler.post(mFpsTick);
+    }
+
+    void setSustained(boolean on) {
+        android.os.PowerManager pm = getSystemService(android.os.PowerManager.class);
+        if (pm != null && pm.isSustainedPerformanceModeSupported())
+            getWindow().setSustainedPerformanceMode(on);
+    }
+
+    /** Shown or hidden from the menu — created on demand, even with a controller connected. */
+    void setTouchVisible(boolean on) {
+        if (on && mTouch == null) addTouchControls();
+        if (mTouch != null) mTouch.setVisibility(on ? View.VISIBLE : View.GONE);
+        if (mMenu != null && mTouch != null) bringMenuButtonToFront();
+    }
+
+    void reloadTouch() {
+        if (mTouch != null) mTouch.reload();
+    }
+
+    boolean hasTouchControls() {
+        return mTouch != null && mTouch.getVisibility() == View.VISIBLE;
+    }
+
+    void tapStart() {
+        if (mTouch != null) mTouch.tapStart();
+    }
+
+    void onMenuClosed() {
+        hideSystemBars();
+    }
+
+    private void bringMenuButtonToFront() {
+        // The touch view was added after the button: re-attach the button above it.
+        for (int i = 0; i < mLayout.getChildCount(); i++) {
+            View v = mLayout.getChildAt(i);
+            if (v instanceof TextView && "≡".contentEquals(((TextView) v).getText())) {
+                v.bringToFront();
+                break;
+            }
+        }
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(android.view.KeyEvent event) {
+        // BACK closes the in-game menu rather than reaching the game.
+        if (mMenu != null && mMenu.isOpen() && event.getKeyCode() == android.view.KeyEvent.KEYCODE_BACK) {
+            if (event.getAction() == android.view.KeyEvent.ACTION_UP) mMenu.close();
+            return true;
+        }
+        return super.dispatchKeyEvent(event);
     }
 
     private final Runnable mFpsTick = new Runnable() {
@@ -162,7 +230,11 @@ public class GameActivity extends SDLActivity {
     private void maybeAddTouchControls() {
         if (!GameEnv.prefs(this).getBoolean(GameEnv.PREF_TOUCH, true)) return;
         if (physicalGamepadPresent()) return;
-        if (mLayout == null) return;
+        addTouchControls();
+    }
+
+    private void addTouchControls() {
+        if (mLayout == null || mTouch != null) return;
         mTouch = new TouchControlsView(this);
         mLayout.addView(mTouch, new RelativeLayout.LayoutParams(
                 RelativeLayout.LayoutParams.MATCH_PARENT, RelativeLayout.LayoutParams.MATCH_PARENT));

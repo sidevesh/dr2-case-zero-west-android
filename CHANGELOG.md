@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.2.0
+
+**Both games**
+- **Cheats** (CONTROLS › CHEATS): god mode, zombies ignore you, infinite weapon
+  durability — each game's own developer switches, each its own toggle, on from the
+  first frame.
+- **Auto-mash**: holding A, B, X or Y on the on-screen controller repeats it about 15
+  times a second, for the button-mash escapes when a zombie grabs you.
+- **RUN button**: above the move stick; tap it and Chuck keeps running the way you last
+  moved (steer with the stick), tap again to stop.
+- **In-game menu**: a small ≡ button at the top of the screen opens a side panel over
+  the game, applied at once and remembered:
+  - the cheats;
+  - the FPS counter;
+  - FSR on/off and its sharpness;
+  - the touch controls: shown, opacity, size, haptics, auto-mash, RUN button;
+  - gyro settings;
+  - sustained performance;
+  - a shortcut to the game's own pause menu.
+
+  BACK closes it.
+- Case West now has every Android fix from 1.1.x that applies to it: the 540p sizing
+  fix, the bounded texture memory, the quieter log, the Balanced preset at 30 FPS and
+  the performance log. (Case Zero's golden-texture cap, exposure watch and luminance
+  hold do not apply: Case West has neither of those systems.)
+
 ## 1.1.5
 
 - Case Zero: the long blackouts that end with the picture too bright. The game

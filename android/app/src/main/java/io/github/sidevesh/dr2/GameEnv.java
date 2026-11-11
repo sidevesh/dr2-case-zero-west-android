@@ -51,6 +51,20 @@ public final class GameEnv {
     public static final String PREF_GYRO_INVERT_Y = "gyro_invert_y";
     public static final String PREF_UPSCALER = "upscaler";         // bilinear | fsr
     public static final String PREF_FSR_SHARP = "fsr_sharpness";   // percent, 0..100
+    public static final String PREF_AUTOMASH = "touch_automash";   // held A/B/X/Y repeats
+    public static final String PREF_RUN_BUTTON = "touch_run_button"; // the RUN lock button
+    public static final String PREF_MENU_BUTTON = "ingame_menu_button";
+    public static final String PREF_CHEAT_GOD = "cheat_god_mode";
+    public static final String PREF_CHEAT_IGNORE = "cheat_zombies_ignore";
+    public static final String PREF_CHEAT_DURABILITY = "cheat_infinite_durability";
+
+    /** The cheat bits native/android_main.cpp and the game's input hook read. */
+    static int cheatMask(Context c) {
+        SharedPreferences p = prefs(c);
+        return (p.getBoolean(PREF_CHEAT_GOD, false) ? 1 : 0)
+                | (p.getBoolean(PREF_CHEAT_IGNORE, false) ? 2 : 0)
+                | (p.getBoolean(PREF_CHEAT_DURABILITY, false) ? 4 : 0);
+    }
 
     private GameEnv() {}
 
@@ -154,6 +168,9 @@ public final class GameEnv {
         // Sharpness: 100% = 0 stops (sharpest) .. 0% = 2 stops.
         SharedPreferences sp = prefs(c);
         set("DR2_FSR", sp.getString(PREF_UPSCALER, "fsr").equals("fsr") ? "1" : "0");
+        // Cheats chosen in the launcher, from the first frame (the in-game menu changes
+        // them live through NativeBridge.setCheats).
+        set("DR2_CHEATS", Integer.toString(cheatMask(c)));
         set("DR2_FSR_SHARPNESS", String.format(java.util.Locale.US, "%.2f",
                 2.0 * (1.0 - sp.getInt(PREF_FSR_SHARP, 80) / 100.0)));
         // The player's own KEY=VALUE lines (the launcher's ADVANCED box) win over all of it.

@@ -56,6 +56,60 @@ index 05f4622..c3f109a 100644
 +    set(DR2_ANDROID_DIR "${CZ_ANDROID_DIR}")
 +    include("${CZ_ANDROID_DIR}/android.cmake")
 +endif()
+diff --git a/runtime/cpu/debug_tunables.cpp b/runtime/cpu/debug_tunables.cpp
+index 151b19a..8444439 100644
+--- a/runtime/cpu/debug_tunables.cpp
++++ b/runtime/cpu/debug_tunables.cpp
+@@ -1819,10 +1819,49 @@ extern "C" int CZ_DebugPlayerPos(float out[3], long long* ageMs)
+     return 1;
+ }
+ 
++// THE ANDROID CHEATS (the launcher's CHEATS section and the in-game menu). Three of
++// the title's own debug bools, held while the player has them on and cleared once
++// when they turn one off (never written otherwise, so a cheat the player never used
++// is never touched). The mask comes from native/android_main.cpp: DR2_CHEATS at start,
++// NativeBridge.setCheats from the in-game menu after. Bit 0 god mode, bit 1 zombies
++// ignore all humans, bit 2 infinite prop durability.
++#if defined(__ANDROID__)
++extern "C" uint32_t Dr2Android_CheatMask();
++#endif
++static void PumpAndroidCheats(uint8_t* base)
++{
++#if defined(__ANDROID__)
++    static const uint32_t kAddr[3] = { 0x82A57C61 /* CHUCK GOD MODE */,
++                                       0x82A57C63 /* ZOMBIES IGNORE ALL HUMANS */,
++                                       0x82A57C71 /* INFINITE PROP DURABILITY */ };
++    static const char* const kName[3] = { "god mode", "zombies ignore all humans",
++                                          "infinite prop durability" };
++    static uint32_t prev = 0;
++    const uint32_t m = Dr2Android_CheatMask();
++    for (int i = 0; i < 3; ++i)
++    {
++        const uint32_t bit = 1u << i;
++        if (m & bit)
++        {
++            if (!PPC_LOAD_U8(kAddr[i]))
++                PPC_STORE_U8(kAddr[i], 1);
++        }
++        else if (prev & bit)
++            PPC_STORE_U8(kAddr[i], 0);
++        if ((m ^ prev) & bit)
++            fprintf(stderr, "[cheat] %s %s\n", kName[i], (m & bit) ? "ON" : "off");
++    }
++    prev = m;
++#else
++    (void)base;
++#endif
++}
++
+ void DebugTunables_PumpAutoChuck(PPCContext& ctx, uint8_t* base)
+ {
+     CensusCallingThread(ctx, base);
+     PumpDebugFlagsFromEnvironment(base);
++    PumpAndroidCheats(base);
+     PumpGuestDiagnosticsFromEnvironment(base);
+     PumpAutoChuckFromEnvironment(ctx, base);
+     PumpPlayerPosCache(ctx, base);
 diff --git a/runtime/gpu/shader_translator.cpp b/runtime/gpu/shader_translator.cpp
 index 61237ba..4330e55 100644
 --- a/runtime/gpu/shader_translator.cpp

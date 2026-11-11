@@ -71,11 +71,16 @@ Also needed: **Android 13 or newer**, 64-bit ARM, and ideally **8 GB of RAM** or
     with a sharpness control), frame-rate cap (30 / 60 / 90 / 120 / unlocked), vsync, MSAA,
     shadows, zombie and world detail, field of view, exposure, FPS counter. These are the
     game's own settings, shared with its in-game PC settings screen.
-  - **Controls**: on-screen controller opacity, size and haptics; **gyro aiming** (off /
-    while aiming / always, with sensitivity and per-axis invert).
+  - **Controls**: on-screen controller opacity, size and haptics; **auto-mash** (a held
+    A/B/X/Y repeats, for escaping grabs) and a **RUN** lock button; **gyro aiming** (off /
+    while aiming / always, with sensitivity and per-axis invert); **cheats**: god mode,
+    zombies ignore you, infinite weapon durability (the games' own developer switches).
   - **System**: GPU driver choice, **your own GPU driver packages**, Turnip rendering
     mode, sustained performance mode,
     skip intro logos, language, device check, logs.
+- **In-game menu**: a small ≡ button at the top of the screen opens a side panel while
+  you play — cheats, FPS counter, FSR and its sharpness, the on-screen controller's
+  settings, gyro, sustained performance, and the game's own pause menu — applied at once.
 - **Controllers**: any Bluetooth or USB controller works as an Xbox pad. Without one, a
   translucent on-screen controller appears.
 - **Turnip GPU driver bundled** for Adreno: Mesa's open-source driver, loaded without

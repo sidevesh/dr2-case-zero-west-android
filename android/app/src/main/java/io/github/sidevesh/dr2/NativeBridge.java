@@ -36,4 +36,10 @@ public final class NativeBridge {
 
     /** Frames the renderer has presented since the process started (the FPS readout). */
     public static native long presentCount();
+
+    /** Cheats, live: bit 0 god mode, 1 zombies ignore all humans, 2 infinite durability. */
+    public static native void setCheats(int mask);
+
+    /** FSR at present, live: on/off and RCAS sharpness in stops (0 = sharpest .. 2). */
+    public static native void setFsr(boolean on, float sharpnessStops);
 }

@@ -166,6 +166,53 @@ Java_io_github_sidevesh_dr2_NativeBridge_presentCount(JNIEnv*, jclass)
     return jlong(g_presents.load(std::memory_order_relaxed));
 }
 
+// ---- cheats (the launcher's CHEATS section, the in-game menu) ----------------------------
+// A bit mask the game's input-poll hook reads (debug_tunables*.cpp in the patch):
+// bit 0 god mode, bit 1 zombies ignore all humans, bit 2 infinite prop durability.
+// DR2_CHEATS (decimal) at start, then NativeBridge.setCheats.
+namespace
+{
+std::atomic<uint32_t> g_cheats{ 0 };
+std::once_flag g_cheatsInit;
+}
+
+extern "C" uint32_t Dr2Android_CheatMask()
+{
+    std::call_once(g_cheatsInit, [] {
+        if (const char* v = std::getenv("DR2_CHEATS"))
+            g_cheats.store(uint32_t(std::strtoul(v, nullptr, 10)) & 7u);
+    });
+    return g_cheats.load(std::memory_order_relaxed);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_sidevesh_dr2_NativeBridge_setCheats(JNIEnv*, jclass, jint mask)
+{
+    Dr2Android_CheatMask();   // the start-up value is read first, then replaced
+    g_cheats.store(uint32_t(mask) & 7u);
+}
+
+// ---- FSR, live (android_fsr.inc; the in-game menu) ---------------------------------------
+namespace
+{
+std::atomic<int> g_fsrLive{ -1 };       // -1: as the environment said at start
+std::atomic<float> g_fsrSharpLive{ -1.f };
+}
+
+extern "C" int Dr2Android_FsrLive(float* sharpness)
+{
+    if (sharpness)
+        *sharpness = g_fsrSharpLive.load(std::memory_order_relaxed);
+    return g_fsrLive.load(std::memory_order_relaxed);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_sidevesh_dr2_NativeBridge_setFsr(JNIEnv*, jclass, jboolean on, jfloat stops)
+{
+    g_fsrSharpLive.store(stops);
+    g_fsrLive.store(on ? 1 : 0);
+}
+
 // ---- DXC's large-stack thread (android_glue.h) ------------------------------------------
 namespace
 {

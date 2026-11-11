@@ -44,6 +44,12 @@ import java.util.List;
  * batched to the display's frame), and the view redraws only when what it shows
  * changed.
  *
+ * AUTO-MASH (CONTROLS, or the in-game menu): a held A/B/X/Y repeats itself about 15
+ * times a second — for the button-mash escapes from a zombie's grab.
+ * RUN LOCK: the RUN button above the move stick holds the stick at full deflection in
+ * the direction last moved (forward if none); steer with the stick as usual, tap RUN
+ * again to stop. Settings are re-read live (reload()) when the in-game menu changes them.
+ *
  * GYRO AIMING: the phone's rotation rate is added to the camera (right) stick —
  * always, or only while the aim button is held (launcher: CONTROLS > GYRO). It is
  * velocity-as-stick, the way a game without native gyro support has to take it: turn
@@ -72,15 +78,15 @@ public class TouchControlsView extends View implements SensorEventListener {
 
     private boolean mAttached;
     private float u;
-    private final float mOpacity, mScale;
-    private final boolean mHaptics;
+    private float mOpacity, mScale;
+    private boolean mHaptics, mAutoMash, mRunButton;
     private static final long DIM_AFTER_MS = 4000;
 
     // Gyro (see the class comment).
-    private final String mGyroMode;      // off | aim | always
-    private final String mGyroButton;    // LT | RT | LB | RB: the button that aims
-    private final float mGyroSens;       // stick units per rad/s
-    private final boolean mGyroInvertX, mGyroInvertY;
+    private String mGyroMode;      // off | aim | always
+    private String mGyroButton;    // LT | RT | LB | RB: the button that aims
+    private float mGyroSens;       // stick units per rad/s
+    private boolean mGyroInvertX, mGyroInvertY;
     private SensorManager mSensors;
     private float mTouchRX, mTouchRY;    // the camera stick's own (touch) deflection
     private float mGyroX, mGyroY;        // the gyro's, already filtered and scaled
@@ -124,17 +130,38 @@ public class TouchControlsView extends View implements SensorEventListener {
     private int mDpadPointer = -1;
     private int mDpadState;   // bit 0 up, 1 down, 2 left, 3 right
 
-    public TouchControlsView(Context c) {
-        super(c);
-        android.content.SharedPreferences sp = GameEnv.prefs(c);
+    private void loadPrefs() {
+        android.content.SharedPreferences sp = GameEnv.prefs(getContext());
         mOpacity = Math.max(0.2f, Math.min(1f, sp.getInt(GameEnv.PREF_TOUCH_OPACITY, 60) / 100f));
         mScale = Math.max(0.7f, Math.min(1.5f, sp.getInt(GameEnv.PREF_TOUCH_SCALE, 100) / 100f));
         mHaptics = sp.getBoolean(GameEnv.PREF_HAPTICS, true);
+        mAutoMash = sp.getBoolean(GameEnv.PREF_AUTOMASH, false);
+        mRunButton = sp.getBoolean(GameEnv.PREF_RUN_BUTTON, true);
         mGyroMode = sp.getString(GameEnv.PREF_GYRO_MODE, "aim");
         mGyroButton = sp.getString(GameEnv.PREF_GYRO_BUTTON, "LT");
         mGyroSens = 0.55f * Math.max(0.25f, Math.min(4f, sp.getInt(GameEnv.PREF_GYRO_SENS, 100) / 100f));
         mGyroInvertX = sp.getBoolean(GameEnv.PREF_GYRO_INVERT_X, false);
         mGyroInvertY = sp.getBoolean(GameEnv.PREF_GYRO_INVERT_Y, false);
+    }
+
+    /** Re-read every setting (the in-game menu changed one) and apply it now. */
+    void reload() {
+        loadPrefs();
+        animate().cancel();
+        setAlpha(mOpacity);
+        if (!mRunButton && mRunLock) setRunLock(false);
+        if (!mAutoMash) stopMash();
+        unregisterGyro();
+        if (isAttachedToWindow()) registerGyro();
+        mGyroX = mGyroY = 0f;
+        if (mAttached) pushRight();
+        layoutControls(getWidth(), getHeight());
+        wake();
+    }
+
+    public TouchControlsView(Context c) {
+        super(c);
+        loadPrefs();
         mFill.setColor(Color.argb(0x30, 0, 0, 0));
         mFillDown.setColor(Color.argb(0x55, 0xFF, 0xFF, 0xFF));
         mStroke.setColor(Color.argb(0x8C, 0xFF, 0xFF, 0xFF));
@@ -159,6 +186,7 @@ public class TouchControlsView extends View implements SensorEventListener {
         mButtons.add(new Btn("START", KeyEvent.KEYCODE_BUTTON_START, -1, false));
         mButtons.add(new Btn("L3", KeyEvent.KEYCODE_BUTTON_THUMBL, -1, true));
         mButtons.add(new Btn("R3", KeyEvent.KEYCODE_BUTTON_THUMBR, -1, true));
+        mButtons.add(new Btn("RUN", 0, -1, true));   // the run lock, not a pad button
         btn("A").faceColor = 0xFF7DD35A;
         btn("B").faceColor = 0xFFF0604F;
         btn("X").faceColor = 0xFF4FA3F0;
@@ -182,17 +210,26 @@ public class TouchControlsView extends View implements SensorEventListener {
     @Override
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
-        if (mGyroMode.equals("off")) return;
+        registerGyro();
+    }
+
+    private void registerGyro() {
+        if (mSensors != null || mGyroMode.equals("off")) return;
         mSensors = (SensorManager) getContext().getSystemService(Context.SENSOR_SERVICE);
         Sensor g = mSensors != null ? mSensors.getDefaultSensor(Sensor.TYPE_GYROSCOPE) : null;
         if (g != null) mSensors.registerListener(this, g, 10_000);   // 100 Hz
         else mSensors = null;
     }
 
-    @Override
-    protected void onDetachedFromWindow() {
+    private void unregisterGyro() {
         if (mSensors != null) mSensors.unregisterListener(this);
         mSensors = null;
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        unregisterGyro();
+        stopMash();
         super.onDetachedFromWindow();
     }
 
@@ -246,6 +283,7 @@ public class TouchControlsView extends View implements SensorEventListener {
     }
 
     void detach() {
+        stopMash();
         if (!mAttached) return;
         SDLControllerManager.nativeRemoveJoystick(DEVICE_ID);
         mAttached = false;
@@ -340,6 +378,8 @@ public class TouchControlsView extends View implements SensorEventListener {
         // Stick clicks and the D-pad along the bottom middle.
         circle(btn("L3").r, w / 2f - 1.3f * u, h - 1.0f * u, 0.55f * u);
         circle(btn("R3").r, w / 2f + 1.3f * u, h - 1.0f * u, 0.55f * u);
+        // The run lock, above where the move stick rests.
+        circle(btn("RUN").r, 2.4f * u, h - 4.75f * u, 0.5f * u);
         float dc = 1.25f * u;
         mDpad.set(w * 0.30f - dc, h - 1.2f * u - dc, w * 0.30f + dc, h - 1.2f * u + dc);
         // Stick homes (where they are drawn at rest).
@@ -354,7 +394,8 @@ public class TouchControlsView extends View implements SensorEventListener {
         drawStick(c, mRight, false);
         float corner = u * 0.28f;
         for (Btn b : mButtons) {
-            boolean down = b.pointer >= 0;
+            if (b.label.equals("RUN") && !mRunButton) continue;
+            boolean down = b.label.equals("RUN") ? mRunLock : b.pointer >= 0;
             Paint fill = down ? mFillDown : mFill, stroke = down ? mStrokeDown : mStroke;
             if (b.round) {
                 float rad = b.r.width() / 2f;
@@ -448,7 +489,15 @@ public class TouchControlsView extends View implements SensorEventListener {
     private boolean mDirty;
 
     private void down(int id, float x, float y) {
+        Btn run = btn("RUN");
+        if (mRunButton && run.hit(x, y)) {
+            setRunLock(!mRunLock);
+            buzz();
+            mDirty = true;
+            return;
+        }
         for (Btn b : mButtons) {
+            if (b == run) continue;
             if (b.pointer < 0 && b.hit(x, y)) {
                 b.pointer = id;
                 press(b, true);
@@ -500,6 +549,8 @@ public class TouchControlsView extends View implements SensorEventListener {
                 if (s == mRight) {
                     mTouchRX = mTouchRY = 0f;
                     pushRight();
+                } else if (mRunLock) {
+                    pushRunDirection();   // keep running the way the stick last pointed
                 } else {
                     SDLControllerManager.onNativeJoy(DEVICE_ID, s.axisX, 0f);
                     SDLControllerManager.onNativeJoy(DEVICE_ID, s.axisY, 0f);
@@ -509,6 +560,7 @@ public class TouchControlsView extends View implements SensorEventListener {
     }
 
     private void press(Btn b, boolean down) {
+        if (down && mAutoMash && isFace(b)) startMash();
         if (b.triggerAxis >= 0) {
             SDLControllerManager.onNativeJoy(DEVICE_ID, b.triggerAxis, down ? 1f : -1f);
         } else if (down) {
@@ -527,9 +579,87 @@ public class TouchControlsView extends View implements SensorEventListener {
             pushRight();
             return;
         }
+        float mag = (float) Math.hypot(vx, vy);
+        if (mag > 0.3f) { mRunDX = vx / mag; mRunDY = vy / mag; }
+        if (mRunLock) {
+            // Steering while locked: full deflection, the new heading (a thumb resting
+            // near the centre keeps the old one).
+            pushRunDirection();
+            return;
+        }
         SDLControllerManager.onNativeJoy(DEVICE_ID, s.axisX, vx);
         SDLControllerManager.onNativeJoy(DEVICE_ID, s.axisY, vy);
     }
+
+    /** The in-game menu's "Pause menu (START)": a short START press. */
+    void tapStart() {
+        attach();
+        SDLControllerManager.onNativePadDown(DEVICE_ID, KeyEvent.KEYCODE_BUTTON_START);
+        postDelayed(() -> SDLControllerManager.onNativePadUp(DEVICE_ID, KeyEvent.KEYCODE_BUTTON_START), 90);
+    }
+
+    // ---- run lock ------------------------------------------------------------------
+
+    private boolean mRunLock;
+    private float mRunDX = 0f, mRunDY = -1f;   // forward until the stick says otherwise
+
+    private void setRunLock(boolean on) {
+        attach();
+        mRunLock = on;
+        if (on) {
+            pushRunDirection();
+        } else if (mLeft.pointer < 0) {
+            SDLControllerManager.onNativeJoy(DEVICE_ID, mLeft.axisX, 0f);
+            SDLControllerManager.onNativeJoy(DEVICE_ID, mLeft.axisY, 0f);
+        } else {
+            stick(mLeft);
+        }
+        invalidate();
+    }
+
+    private void pushRunDirection() {
+        SDLControllerManager.onNativeJoy(DEVICE_ID, mLeft.axisX, mRunDX);
+        SDLControllerManager.onNativeJoy(DEVICE_ID, mLeft.axisY, mRunDY);
+    }
+
+    // ---- auto-mash -----------------------------------------------------------------
+
+    private static final long MASH_HALF_PERIOD_MS = 33;   // ~15 presses a second
+    private boolean mMashing, mMashReleased;
+
+    private static boolean isFace(Btn b) {
+        return b.keycode == KeyEvent.KEYCODE_BUTTON_A || b.keycode == KeyEvent.KEYCODE_BUTTON_B
+                || b.keycode == KeyEvent.KEYCODE_BUTTON_X || b.keycode == KeyEvent.KEYCODE_BUTTON_Y;
+    }
+
+    private void startMash() {
+        if (mMashing) return;
+        mMashing = true;
+        mMashReleased = false;
+        postDelayed(mMash, MASH_HALF_PERIOD_MS * 2);
+    }
+
+    private void stopMash() {
+        mMashing = false;
+        removeCallbacks(mMash);
+    }
+
+    /** Alternates every held face button between released and pressed. */
+    private final Runnable mMash = new Runnable() {
+        @Override public void run() {
+            if (!mMashing || !mAutoMash) { mMashing = false; return; }
+            boolean any = false;
+            mMashReleased = !mMashReleased;
+            for (Btn b : mButtons) {
+                if (b.pointer < 0 || !isFace(b)) continue;
+                any = true;
+                if (mMashReleased) SDLControllerManager.onNativePadUp(DEVICE_ID, b.keycode);
+                else SDLControllerManager.onNativePadDown(DEVICE_ID, b.keycode);
+            }
+            if (!any) { mMashing = false; return; }
+            postDelayed(this, MASH_HALF_PERIOD_MS);
+        }
+    };
 
     private void dpad(float x, float y) {
         float dx = x - mDpad.centerX(), dy = y - mDpad.centerY();

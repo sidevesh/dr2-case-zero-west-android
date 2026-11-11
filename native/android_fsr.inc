@@ -36,23 +36,32 @@ struct Push
     uint32_t outSize[4];
 };
 
+// The launcher's choice comes in the environment at start; the in-game menu can change
+// both while playing (NativeBridge.setFsr -> Dr2Android_FsrLive, android_main.cpp). The
+// FSR resources are made on first use, so turning it on mid-game is just the next frame.
+extern "C" int Dr2Android_FsrLive(float* sharpness);
+
 bool Enabled()
 {
     static const bool on = [] {
         const char* e = std::getenv("DR2_FSR");
         return e && e[0] == '1';
     }();
-    return on;
+    float s;
+    const int live = Dr2Android_FsrLive(&s);
+    return live >= 0 ? live != 0 : on;
 }
 
 float SharpnessStops()
 {
-    static const float s = [] {
+    static const float env = [] {
         const char* e = std::getenv("DR2_FSR_SHARPNESS");
         float v = e ? float(std::atof(e)) : 0.25f;
         return v < 0.f ? 0.f : (v > 2.f ? 2.f : v);
     }();
-    return s;
+    float s = -1.f;
+    Dr2Android_FsrLive(&s);
+    return s >= 0.f ? (s > 2.f ? 2.f : s) : env;
 }
 
 uint32_t F2U(float f)

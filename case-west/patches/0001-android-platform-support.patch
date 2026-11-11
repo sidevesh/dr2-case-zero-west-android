@@ -56,6 +56,60 @@ index 7e59d4d..60f819a 100644
 +    set(DR2_ANDROID_DIR "${CW_ANDROID_DIR}")
 +    include("${CW_ANDROID_DIR}/android.cmake")
 +endif()
+diff --git a/runtime/cpu/debug_tunables_cw.cpp b/runtime/cpu/debug_tunables_cw.cpp
+index 17830d5..ccb49bb 100644
+--- a/runtime/cpu/debug_tunables_cw.cpp
++++ b/runtime/cpu/debug_tunables_cw.cpp
+@@ -652,8 +652,47 @@ void DebugTunables_ToggleFullDebugMenu(PPCContext&, uint8_t* base)
+             g_debugMenuDtorCalls.load(), g_debugMenuDtorCalls.load() == 1 ? "" : "s");
+ }
+ 
+-// Not ported (AutoChuck is a per-title surface this port has no addresses for).
+-void DebugTunables_PumpAutoChuck(PPCContext&, uint8_t*) {}
++// THE ANDROID CHEATS (the launcher's CHEATS section and the in-game menu). Three of
++// the title's own debug bools, held while the player has them on and cleared once
++// when they turn one off (never written otherwise, so a cheat the player never used
++// is never touched). The mask comes from native/android_main.cpp: DR2_CHEATS at start,
++// NativeBridge.setCheats from the in-game menu after. Bit 0 god mode, bit 1 zombies
++// ignore all humans, bit 2 infinite prop durability.
++#if defined(__ANDROID__)
++extern "C" uint32_t Dr2Android_CheatMask();
++#endif
++// Not ported (AutoChuck is a per-title surface this port has no addresses for); the
++// slot runs on every input poll, which is where the Android cheats are held.
++void DebugTunables_PumpAutoChuck(PPCContext&, uint8_t* base)
++{
++#if defined(__ANDROID__)
++    static const char* const kTun[3] = { "chuck_in_god_mode", "zombies_ignore_all_humans",
++                                         "infinite_prop_durability" };
++    static const Tunable* t[3] = { Find(kTun[0]), Find(kTun[1]), Find(kTun[2]) };
++    static uint32_t prev = 0;
++    const uint32_t m = Dr2Android_CheatMask();
++    for (int i = 0; i < 3; ++i)
++    {
++        const uint32_t bit = 1u << i;
++        if (!t[i])
++            continue;
++        uint8_t* p = base + t[i]->address;
++        if (m & bit)
++        {
++            if (!*p)
++                *p = 1;
++        }
++        else if (prev & bit)
++            *p = 0;
++        if ((m ^ prev) & bit)
++            fprintf(stderr, "[cheat] %s %s (@%08X)\n", kTun[i], (m & bit) ? "ON" : "off",
++                    t[i]->address);
++    }
++    prev = m;
++#else
++    (void)base;
++#endif
++}
+ 
+ // Runs on the XamInputGetState bridge — a guest thread with a usable context, which
+ // an action node's callback needs.
 diff --git a/runtime/gpu/shader_translator.cpp b/runtime/gpu/shader_translator.cpp
 index b534eb6..6d4b5ab 100644
 --- a/runtime/gpu/shader_translator.cpp
