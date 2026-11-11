@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.4
+
+- Case Zero: an exposure watch in the game log, to find the remaining blackouts (the
+  picture going black for seconds, then settling brighter). One line when the scene
+  luminance the game measures jumps more than 4x (`[lum]`), and one when the exposure
+  the game sets falls more than 3x within half a second (`[exposure]`); at most 400
+  lines a session. DR2_EXPOSURE_WATCH=0 turns it off.
+
 ## 1.1.3
 
 - Memory no longer grows for the whole session. Textures are recycled once the game

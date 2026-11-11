@@ -106,7 +106,7 @@ index e9ba871..0bab0a3 100644
                   callback, userData);
      }
 diff --git a/runtime/gpu/vk_renderer.cpp b/runtime/gpu/vk_renderer.cpp
-index 0a43804..041acd3 100644
+index 0a43804..b3133ab 100644
 --- a/runtime/gpu/vk_renderer.cpp
 +++ b/runtime/gpu/vk_renderer.cpp
 @@ -21,6 +21,9 @@
@@ -400,7 +400,99 @@ index 0a43804..041acd3 100644
      }
      else if (rc == VK_ERROR_OUT_OF_DATE_KHR)
      {
-@@ -35068,6 +35231,12 @@ void VkRenderer_DumpStats()
+@@ -15826,6 +15989,75 @@ float LumScaleNow()
+     return float(Settings_ExposureX10()) * 0.1f;
+ }
+ 
++// THE EXPOSURE WATCH (Android). A player sees the picture go black for seconds and
++// then settle brighter: the title's exposure controller fed a measurement far brighter
++// than the scene. Two lines in the ordinary log, only when something JUMPS, so a
++// blackout is located in the log a player can paste:
++//   [lum]      a luminance write-back (the chain the controller reads) changing by more
++//              than 4x from its previous value at the same address;
++//   [exposure] the exposure the title SET (PS c14.w) falling by more than 3x within half
++//              a second.
++// Budgeted (400 lines a session). Off elsewhere; DR2_EXPOSURE_WATCH=0 silences it.
++bool ExposureWatchOn()
++{
++#if defined(__ANDROID__)
++    static const bool on = [] {
++        const char* v = getenv("DR2_EXPOSURE_WATCH");
++        return !(v && *v == '0');
++    }();
++    return on;
++#else
++    return false;
++#endif
++}
++bool ExposureWatchBudget()
++{
++    static uint32_t left = 400;
++    if (!left) return false;
++    if (--left == 0)
++        fprintf(stderr, "[lum] exposure watch: line budget spent, silent from here\n");
++    return true;
++}
++void ExposureWatchLum(uint32_t dest, uint32_t idx, uint32_t gw, uint32_t gh, uint32_t hw,
++                      uint32_t hh, float avg0, float v)
++{
++    if (!ExposureWatchOn() || idx != 0)   // pixel (0,0): the one the CPU reads
++        return;
++    static std::unordered_map<uint32_t, std::pair<float, uint64_t>> last;
++    auto& L = last[dest];
++    const float prev = L.first;
++    const uint64_t prevFrame = L.second;
++    L = { v, R->frame };
++    if (prev <= 0.0f)
++        return;
++    const float hi = std::max(prev, v), lo = std::max(std::min(prev, v), 1e-4f);
++    if (hi / lo > 4.0f && ExposureWatchBudget())
++        fprintf(stderr, "[lum] frame %llu: %08X (%ux%u guest, %ux%u host) %.4f -> %.4f "
++                        "(raw %.1f/255, previous write frame %llu)\n",
++                (unsigned long long)R->frame, dest, gw, gh, hw, hh, double(prev), double(v),
++                double(avg0), (unsigned long long)prevFrame);
++}
++void ExposureWatchFrame(uint32_t draws, float expMax)
++{
++    if (!ExposureWatchOn() || draws == 0 || !(expMax > 0.0f))
++        return;
++    // A ring of the last 16 frames' exposure; compare against the brightest of them.
++    static float ring[16] = {};
++    static uint32_t n = 0;
++    float peak = 0.0f;
++    for (float e : ring) peak = std::max(peak, e);
++    ring[n++ % 16] = expMax;
++    static uint64_t quietUntil = 0;
++    if (peak > 0.0f && peak / expMax > 3.0f && R->frame >= quietUntil && ExposureWatchBudget())
++    {
++        fprintf(stderr, "[exposure] frame %llu: the title's exposure fell %.2f -> %.4f "
++                        "(%.0fx) within 16 frames\n",
++                (unsigned long long)R->frame, double(peak), double(expMax),
++                double(peak / expMax));
++        quietUntil = R->frame + 30;
++    }
++}
++
+ int RetireOldestFrame()
+ {
+     // Slots are used strictly in ring order, so when the frame just submitted is `s` the
+@@ -15968,6 +16200,7 @@ int RetireOldestFrame()
+                         // one: it would be a fudge factor standing in for whatever makes
+                         // our scene darker than hardware's before exposure is applied.
+                         v *= LumScaleNow();
++                        ExposureWatchLum(g.dest, idx, g.w, g.h, g.hw, g.hh, avg[0], v);
+                         const uint16_t hv = halfOf(v);
+                         uint8_t* dst = g_guestBase + PhysToVa(g.dest) + idx * 2;
+                         if (g.endian == 1)
+@@ -31640,6 +31873,7 @@ void DoSwapImpl(uint8_t* base, uint32_t frontBuffer, uint32_t width, uint32_t he
+         // Reset unconditionally, including when the file could not be opened, so the
+         // counters never accumulate across frames in a run that is not tracing.
+     }
++    ExposureWatchFrame(R->expDraws, R->expMax);
+     R->expDraws = 0;
+ 
+     static FILE* statsFile = nullptr;
+@@ -35068,6 +35302,12 @@ void VkRenderer_DumpStats()
                  "uploads served real bytes (%zu entries held)\n",
                  (unsigned long long)g_goldenStored, (unsigned long long)g_goldenServed,
                  g_goldenTex.size());
