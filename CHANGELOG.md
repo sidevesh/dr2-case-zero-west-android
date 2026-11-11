@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.2.1
+
+**Case Zero**
+- **Blackouts no longer stretched to 6-7 seconds.** 1.1.5's luminance hold kept the
+  last good brightness reading for up to 150 frames whenever the measurement went
+  black. When the black comes from the game's own exposure control, that stopped it
+  recovering until the hold ran out: 150 frames is 6-7 seconds at 22-25 FPS, which is
+  how long the blackouts in a 1.2.0 log lasted. The hold is now 4 frames: enough to
+  ride out a glitch frame, too short to extend a dark spell.
+- **A `[blackout]` line in the game log** at each blackout's start and end, with the
+  game's exposure and draw count for the 24 frames before it. It shows whether the
+  exposure fell before the picture went black (the game's exposure control) or the
+  picture went black at a steady exposure (a rendering fault).
+
 ## 1.2.0
 
 **Both games**
