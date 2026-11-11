@@ -93,7 +93,7 @@ index b534eb6..6d4b5ab 100644
  // ---------------------------------------------------------------------------
  // The pipeline, end to end.
 diff --git a/runtime/gpu/vk_renderer.cpp b/runtime/gpu/vk_renderer.cpp
-index c3bed45..a72e832 100644
+index c3bed45..04127b7 100644
 --- a/runtime/gpu/vk_renderer.cpp
 +++ b/runtime/gpu/vk_renderer.cpp
 @@ -18,6 +18,9 @@
@@ -106,7 +106,33 @@ index c3bed45..a72e832 100644
  
  #include <algorithm>
  #include <array>
-@@ -14636,7 +14639,22 @@ bool CreateSwapchain(uint32_t wantW, uint32_t wantH)
+@@ -1611,14 +1614,23 @@ uint32_t ResScale()
+ // A guest extent, in host pixels — Y by H/720, X by W/1280, truncating (see the
+ // header comment above). The Pass* forms take an explicit internal resolution, for
+ // the shadow tier's per-pass size and for a snapshot's own build size.
+-inline uint32_t PassY(uint32_t v, uint32_t ph) { return uint32_t(uint64_t(v) * ph / 720); }
++// Android (internal resolutions below 720 lines): a non-empty extent never scales to
++// zero. At 540p the luminance chain's one-row passes became zero rows, so the exposure
++// write-back copied nothing and handed the title's controller stale staging bytes — a
++// bright one darkened the picture to black for seconds. An identity at 720p and above.
++inline uint32_t PassY(uint32_t v, uint32_t ph)
++{
++    const uint64_t r = uint64_t(v) * ph / 720;
++    return uint32_t(v != 0 && r == 0 ? 1 : r);
++}
+ inline int32_t PassYi(int32_t v, uint32_t ph)
+ {
+     return int32_t(int64_t(v) * int64_t(ph) / 720);
+ }
+ inline uint32_t PassX(uint32_t v, uint32_t pw)
+ {
+-    return uint32_t(uint64_t(v) * pw / 1280);
++    const uint64_t r = uint64_t(v) * pw / 1280;
++    return uint32_t(v != 0 && r == 0 ? 1 : r);   // see PassY
+ }
+ inline int32_t PassXi(int32_t v, uint32_t pw)
+ {
+@@ -14636,7 +14648,22 @@ bool CreateSwapchain(uint32_t wantW, uint32_t wantH)
                              "TRANSFER_SRC on its images — the dump cannot run.\n");
      }
      sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -129,7 +155,7 @@ index c3bed45..a72e832 100644
      sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
      sci.presentMode = mode;
      sci.clipped = VK_TRUE;
-@@ -14714,9 +14732,49 @@ bool CreateSwapchain(uint32_t wantW, uint32_t wantH)
+@@ -14714,9 +14741,49 @@ bool CreateSwapchain(uint32_t wantW, uint32_t wantH)
  // setter is defined at global scope near VkRenderer_DumpStats.
  std::atomic<bool> g_swapRebuildRequest{ false };
  
@@ -179,7 +205,7 @@ index c3bed45..a72e832 100644
      if (g_swapRebuildRequest.exchange(false, std::memory_order_acq_rel))
          R->swap.rebuildWanted = true;
  
-@@ -14829,7 +14887,12 @@ void RecordSwapchainBlit(Image& source, uint32_t width, uint32_t height)
+@@ -14829,7 +14896,12 @@ void RecordSwapchainBlit(Image& source, uint32_t width, uint32_t height)
          // one. Suboptimal means the swapchain no longer matches the surface, which is a
          // stale EXTENT more often than anything else.
          R->swap.suboptimal++;
@@ -192,7 +218,7 @@ index c3bed45..a72e832 100644
      }
      else if (rc != VK_SUCCESS)
      {
-@@ -14929,6 +14992,21 @@ void RecordSwapchainBlit(Image& source, uint32_t width, uint32_t height)
+@@ -14929,6 +15001,21 @@ void RecordSwapchainBlit(Image& source, uint32_t width, uint32_t height)
      blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
      blit.dstOffsets[0] = { fitX, fitY, 0 };
      blit.dstOffsets[1] = { fitX + int32_t(fitW), fitY + int32_t(fitH), 1 };
@@ -214,7 +240,7 @@ index c3bed45..a72e832 100644
      vkCmdBlitImage(R->cmd, source.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                     R->swap.images[index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
                     VK_FILTER_LINEAR);
-@@ -15186,13 +15264,23 @@ void PresentSwapchain()
+@@ -15186,13 +15273,23 @@ void PresentSwapchain()
      pi.pSwapchains = &R->swap.swapchain;
      pi.pImageIndices = &R->swap.acquired;
      const VkResult rc = vkQueuePresentKHR(R->queue, &pi);

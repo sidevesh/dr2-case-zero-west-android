@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.2
+
+- Fixed a cause of the picture going black for a few seconds, again and again, at internal
+  resolutions below 720p (540p). The game's automatic exposure measures the scene
+  through a one-pixel-high surface, which scaled to zero rows below 720p, so the game
+  read stale values and sometimes darkened the picture to black until it re-adapted.
+  Sizes now never scale below one pixel; 720p and above are unchanged.
+
 ## 1.1.1
 
 - A performance log for each game session (SYSTEM › Performance log of the last
