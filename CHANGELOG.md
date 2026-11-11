@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.3
+
+- Memory no longer grows for the whole session. Textures are recycled once the game
+  has 6,144 of them (least recently used first) and their memory is given back; they
+  used to stay until 65,536, gigabytes on a long session. Case Zero's "golden" texture
+  store is capped at 128 MB in memory, and its file is rebuilt once it passes 96 MB
+  instead of growing (and being loaded at every start) forever.
+- Quieter log: the once-a-second debug chatter is left out on Android (less work and
+  heat for the whole session). Advanced: DR2_VERBOSE_LOG=1 brings it back.
+- The Balanced preset caps at 30 FPS, as the Xbox 360 ran the game: cooler for longer
+  before the phone throttles. (Settings you already chose are kept; a Balanced setup
+  from before now reads Custom until you pick a preset again.)
+
 ## 1.1.2
 
 - Fixed a cause of the picture going black for a few seconds, again and again, at internal

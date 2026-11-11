@@ -168,7 +168,9 @@ final class RuntimeSettings {
                 default:
                     r = resolutionFor(c, 720);
                     s.setResolution(r[0], r[1]);
-                    s.put("fps_cap", 60);
+                    // 30, as the Xbox 360 ran it: a phone GPU rarely holds more here, and
+                    // the headroom keeps it cooler for longer before it throttles.
+                    s.put("fps_cap", 30);
                     s.put("vsync", 1);
                     s.put("msaa", 0);
                     s.put("shadow_tier", 1);

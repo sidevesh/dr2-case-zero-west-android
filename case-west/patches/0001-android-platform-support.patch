@@ -92,8 +92,21 @@ index b534eb6..6d4b5ab 100644
  
  // ---------------------------------------------------------------------------
  // The pipeline, end to end.
+diff --git a/runtime/gpu/vd.cpp b/runtime/gpu/vd.cpp
+index 4c9d294..d52e13d 100644
+--- a/runtime/gpu/vd.cpp
++++ b/runtime/gpu/vd.cpp
+@@ -981,7 +981,7 @@ void GraphicsInterruptPump()
+         func(threadContext.ppcContext, base);
+         g_pumpIsrNs.fetch_add(NowNs() - tIsr, std::memory_order_relaxed);
+ 
+-        if (++ticks == 1 || (ticks % (1000 / vblankMs)) == 0)
++        if ((++ticks == 1 || (ticks % (1000 / vblankMs)) == 0) && (ticks == 1 || !Dr2QuietLog()))
+             KLOG("vblank #%llu delivered to %08X(0, %08X)\n", (unsigned long long)ticks,
+                  callback, userData);
+     }
 diff --git a/runtime/gpu/vk_renderer.cpp b/runtime/gpu/vk_renderer.cpp
-index c3bed45..04127b7 100644
+index c3bed45..53bb1d1 100644
 --- a/runtime/gpu/vk_renderer.cpp
 +++ b/runtime/gpu/vk_renderer.cpp
 @@ -18,6 +18,9 @@
@@ -132,7 +145,42 @@ index c3bed45..04127b7 100644
  }
  inline int32_t PassXi(int32_t v, uint32_t pw)
  {
-@@ -14636,7 +14648,22 @@ bool CreateSwapchain(uint32_t wantW, uint32_t wantH)
+@@ -6847,7 +6859,14 @@ bool CreateImage(Image& img, uint32_t w, uint32_t h, VkFormat format,
+     const uint64_t ciT2 = CycNow();
+     // THE POOLED PATH. Only callers that promise the image outlives the run ask for it —
+     // see the ImgBlock comment for why that promise is checkable rather than hopeful.
++    // Android: no pool by default. A pooled image's memory is only released at exit, so
++    // the LRU's evictions (bounded slots, below) would free nothing; with one allocation
++    // per texture an eviction gives its memory back. CW_VK_TEX_MEMPOOL=1 restores the pool.
++#if defined(__ANDROID__)
++    static const bool noPool = EnvOn("CW_VK_NO_TEX_MEMPOOL") || !EnvOn("CW_VK_TEX_MEMPOOL");
++#else
+     static const bool noPool = EnvOn("CW_VK_NO_TEX_MEMPOOL");
++#endif
+     VkDeviceMemory bindMem = VK_NULL_HANDLE;
+     VkDeviceSize bindOff = 0;
+     if (poolMemory && !noPool)
+@@ -7865,6 +7884,19 @@ bool CreateDevice()
+         uint32_t want = std::min(deviceCap, 65536u);
+         if (const char* env = getenv("CW_VK_MAX_TEXTURES"))
+             want = std::min(deviceCap, uint32_t(std::max(16, atoi(env))));
++#if defined(__ANDROID__)
++        // Android: textures stay in memory until the heap is full, and at 65,536 slots a
++        // long session holds gigabytes of them in the memory a phone's CPU and GPU share
++        // (RSS 1.0 -> 2.3 GB in 15 minutes on an SM8550). A smaller heap makes the LRU
++        // recycle the least-recently-used ones — a scene uses a few thousand. Each texture
++        // is its own allocation here (no pool, see CreateImage), so the heap also stays
++        // under the driver's allocation limit with room for everything else.
++        else
++            want = std::min(want, 6144u);
++        if (props.limits.maxMemoryAllocationCount < want + 2048u)
++            want = props.limits.maxMemoryAllocationCount > 3072u
++                       ? props.limits.maxMemoryAllocationCount - 2048u : 1024u;
++#endif
+         g_maxDescriptors = std::max(want, 256u);
+         fprintf(stderr,
+                 "[vk] bindless heap: %u slots (device allows %u). Slots are not "
+@@ -14636,7 +14668,22 @@ bool CreateSwapchain(uint32_t wantW, uint32_t wantH)
                              "TRANSFER_SRC on its images — the dump cannot run.\n");
      }
      sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -155,7 +203,7 @@ index c3bed45..04127b7 100644
      sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
      sci.presentMode = mode;
      sci.clipped = VK_TRUE;
-@@ -14714,9 +14741,49 @@ bool CreateSwapchain(uint32_t wantW, uint32_t wantH)
+@@ -14714,9 +14761,49 @@ bool CreateSwapchain(uint32_t wantW, uint32_t wantH)
  // setter is defined at global scope near VkRenderer_DumpStats.
  std::atomic<bool> g_swapRebuildRequest{ false };
  
@@ -205,7 +253,7 @@ index c3bed45..04127b7 100644
      if (g_swapRebuildRequest.exchange(false, std::memory_order_acq_rel))
          R->swap.rebuildWanted = true;
  
-@@ -14829,7 +14896,12 @@ void RecordSwapchainBlit(Image& source, uint32_t width, uint32_t height)
+@@ -14829,7 +14916,12 @@ void RecordSwapchainBlit(Image& source, uint32_t width, uint32_t height)
          // one. Suboptimal means the swapchain no longer matches the surface, which is a
          // stale EXTENT more often than anything else.
          R->swap.suboptimal++;
@@ -218,7 +266,7 @@ index c3bed45..04127b7 100644
      }
      else if (rc != VK_SUCCESS)
      {
-@@ -14929,6 +15001,21 @@ void RecordSwapchainBlit(Image& source, uint32_t width, uint32_t height)
+@@ -14929,6 +15021,21 @@ void RecordSwapchainBlit(Image& source, uint32_t width, uint32_t height)
      blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
      blit.dstOffsets[0] = { fitX, fitY, 0 };
      blit.dstOffsets[1] = { fitX + int32_t(fitW), fitY + int32_t(fitH), 1 };
@@ -240,7 +288,7 @@ index c3bed45..04127b7 100644
      vkCmdBlitImage(R->cmd, source.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                     R->swap.images[index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
                     VK_FILTER_LINEAR);
-@@ -15186,13 +15273,23 @@ void PresentSwapchain()
+@@ -15186,13 +15293,23 @@ void PresentSwapchain()
      pi.pSwapchains = &R->swap.swapchain;
      pi.pImageIndices = &R->swap.acquired;
      const VkResult rc = vkQueuePresentKHR(R->queue, &pi);
@@ -478,8 +526,22 @@ index 66d3fc7..5116f34 100644
  #if defined(__APPLE__)
      // macOS: build the surface from the CAMetalLayer the WINDOW THREAD made (see
      // g_metalLayer). SDL_Vulkan_CreateSurface would create and attach a fresh NSView
+diff --git a/runtime/kernel/audio.cpp b/runtime/kernel/audio.cpp
+index 1521ec5..49d4bc0 100644
+--- a/runtime/kernel/audio.cpp
++++ b/runtime/kernel/audio.cpp
+@@ -1629,7 +1629,8 @@ uint32_t XMACreateContext_x(be<uint32_t>* contextOut)
+         const uint32_t guest = g_xmaContextArray + i * kXmaContextSize;
+         memset(g_memory.Translate(guest), 0, kXmaContextSize);
+         *contextOut = guest;
+-        KLOG("XMACreateContext -> context %u at %08X (phys %08X)\n", i, guest,
++        if (!Dr2QuietLog())
++            KLOG("XMACreateContext -> context %u at %08X (phys %08X)\n", i, guest,
+              guest & 0x1FFFFFFF);
+         return STATUS_SUCCESS;
+     }
 diff --git a/runtime/kernel/imports.cpp b/runtime/kernel/imports.cpp
-index 5a9db53..3eea247 100644
+index 5a9db53..2fa04d4 100644
 --- a/runtime/kernel/imports.cpp
 +++ b/runtime/kernel/imports.cpp
 @@ -76,6 +76,7 @@
@@ -490,7 +552,17 @@ index 5a9db53..3eea247 100644
  #include "content.h"          // the save-data layer: enumerators and their message
  #include "guestcall.h"
  #include "heap.h"
-@@ -5724,8 +5725,22 @@ static uint32_t DispatchAppMessage(uint32_t app, uint32_t message, void* buffer,
+@@ -384,7 +385,8 @@ static uint32_t MmMapIoSpace_x(uint32_t busNumber, uint32_t physicalAddress, uin
+                                uint32_t protect)
+ {
+     const uint32_t mapped = 0xA0000000u | (physicalAddress & 0x1FFFFFFFu);
+-    KLOG("MmMapIoSpace(bus=%u, phys=%08X, %u bytes, protect=%X) -> %08X\n", busNumber,
++    if (!Dr2QuietLog())
++        KLOG("MmMapIoSpace(bus=%u, phys=%08X, %u bytes, protect=%X) -> %08X\n", busNumber,
+          physicalAddress, size, protect, mapped);
+     return mapped;
+ }
+@@ -5724,8 +5726,22 @@ static uint32_t DispatchAppMessage(uint32_t app, uint32_t message, void* buffer,
                      g_memory.Translate(arrayVa + i * sizeof(GuestXUserAchievement)));
                  const uint32_t id = a->achievementId.get();
                  if (g_achievements.emplace(a->userIndex.get(), id).second)
@@ -513,6 +585,48 @@ index 5a9db53..3eea247 100644
                  // An achievement id is 16 bits on this platform (XACH stores it
                  // as one, and this title's are 1..12). A wider value is a
                  // corrupt message, not an achievement, so it is kept in the
+diff --git a/runtime/kernel/klog.cpp b/runtime/kernel/klog.cpp
+index 4c94be5..e65d6dc 100644
+--- a/runtime/kernel/klog.cpp
++++ b/runtime/kernel/klog.cpp
+@@ -51,7 +51,7 @@ void KernelCallTrace(const char* name, uint64_t hit)
+ 
+     if (hit == 0)
+         std::fprintf(stderr, "[kcall] %s\n", name);
+-    else
++    else if (!Dr2QuietLog())
+         std::fprintf(stderr, "[kcall+] %s hit %llu times\n", name,
+                      static_cast<unsigned long long>(hit));
+ 
+diff --git a/runtime/kernel/klog.h b/runtime/kernel/klog.h
+index 15956ec..84c2cd6 100644
+--- a/runtime/kernel/klog.h
++++ b/runtime/kernel/klog.h
+@@ -45,6 +45,24 @@
+ // the gate's grep can never pick these up by accident.
+ #define KLOG(...) std::fprintf(stderr, "[kernel] " __VA_ARGS__)
+ 
++// Android: the per-second chatter (call-count milestones, vblank ticks, XMA context and
++// I/O-space mappings) is left out of the log. Every line goes to logcat and to the log
++// file on shared storage, for the whole session, and on a phone that is heat for
++// nothing. DR2_VERBOSE_LOG=1 brings it back. Always false elsewhere.
++#include <cstdlib>
++inline bool Dr2QuietLog()
++{
++#if defined(__ANDROID__)
++    static const bool quiet = [] {
++        const char* v = std::getenv("DR2_VERBOSE_LOG");
++        return !(v && *v && *v != '0');
++    }();
++    return quiet;
++#else
++    return false;
++#endif
++}
++
+ // `name` may carry the recompiler's `__imp__` prefix; it is stripped here so both
+ // sides of the diff speak Xenia's names.
+ void KernelCallTrace(const char* name, uint64_t hit);
 diff --git a/runtime/main.cpp b/runtime/main.cpp
 index 517e3b7..f0f0f9d 100644
 --- a/runtime/main.cpp
